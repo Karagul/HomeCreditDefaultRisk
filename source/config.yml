@@ -1,0 +1,12 @@
+default:
+  LogDir: "logs"
+  DataDir: "../data"
+  OutputDir: "output"
+
+debug:
+  DegreeOfParallelism: 2
+  LogLevel: "DEBUG"
+
+release:
+  DegreeOfParallelism: 16
+  LogLevel: "WARN"
