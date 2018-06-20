@@ -14,11 +14,7 @@ common.modeling.splitDataset <- function(dt, .key, .size = .8) {
     is.numeric(.size) && .size > 0 && .size < 1
   )
   
-  
-  result <- list(
-    Train = dt %>% sample_frac(.size, replace = F)
-  )
-  
+  result <- list(Train = dt %>% sample_frac(.size, replace = F))
   result$Valid <- dt %>% anti_join(result$Train, by = .key)
   
   stopifnot(
@@ -310,19 +306,18 @@ common.modeling.convertToMatrix <- function(dt, .metadata) {
 #' subsample_for_bin': 200000,  # Number of samples for constructing bin
 #'  
 common.modeling.getHyperparams <- function(.size = 100L,
-                                           .learning_rate = c(.06, .08),
+                                           .learning_rate = .01,
                                            .max_depth = -1, 
-                                           .num_leaves = c(250, 350, 400),
-                                           .min_data_in_leaf = c(2, 4, 6), 
-                                           .min_sum_hessian_in_leaf = c(.04, .08, .16),
-                                           .feature_fraction = c(.8, .9),
+                                           .num_leaves = 31,
+                                           .min_data_in_leaf = 20, 
+                                           .min_sum_hessian_in_leaf = 1e-3,
+                                           .feature_fraction = 1,
                                            .bagging_fraction = 1,
                                            .bagging_freq = 0,
-                                           .lambda_l1 = c(.24, .32),
-                                           .lambda_l2 = c(.32, .48),
-                                           .min_gain_to_split = c(.2, .4),
-                                           .scale_pos_weight = c(16, 32, 48) 
-) {
+                                           .lambda_l1 = 0,
+                                           .lambda_l2 = 0,
+                                           .min_gain_to_split = 0,
+                                           .scale_pos_weight = 1) {
   
   stopifnot(
     is.numeric(.size) && .size > 0
@@ -330,7 +325,6 @@ common.modeling.getHyperparams <- function(.size = 100L,
   
   expand.grid(learning_rate = .learning_rate,
               max_depth = .max_depth,
-              num_leaves = .num_leaves,
               min_data_in_leaf = .min_data_in_leaf,
               min_sum_hessian_in_leaf = .min_sum_hessian_in_leaf,
               feature_fraction = .feature_fraction,
@@ -340,6 +334,9 @@ common.modeling.getHyperparams <- function(.size = 100L,
               lambda_l2 = .lambda_l2,
               min_gain_to_split = .min_gain_to_split,
               scale_pos_weight = .scale_pos_weight) %>% 
+    mutate(
+      num_leaves = 2^max_depth - 1
+    ) %>% 
     sample_n(.size)
 }
 
@@ -496,7 +493,7 @@ common.modeling.evaluateModel <- function(dt, .threshold = .5, .penalties = c(1,
     group_by(Actual, Predicted)
   
   modelMetrix <- list(
-    FraudN = getModelMetrix(dt.grouped %>% summarise(W = n()))
+    N = getModelMetrix(dt.grouped %>% summarise(W = n()))
   )
   
   scores <- unique(dt$Label) %>% 
