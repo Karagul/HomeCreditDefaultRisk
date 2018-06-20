@@ -21,11 +21,14 @@ model.getMetadata <- function(dt) {
   # set all Logic, FactorSLE, FactorOHE, ExtraVars vars explicitly
   f <- list(
     Numeric = c(),
-    Logic = c("EmergencystateMode", "CodeGender", "FlagOwnCar", "FlagOwnRealty", "FlagMobil", "FlagEmpPhone", "FlagWorkPhone", "FlagContMobile", "FlagPhone", "FlagEmail", "FlagDocument2", "FlagDocument3", "FlagDocument4", "FlagDocument5", "FlagDocument6", "FlagDocument7", "FlagDocument8", "FlagDocument9", "FlagDocument10", "FlagDocument11", "FlagDocument12", "FlagDocument13", "FlagDocument14", "FlagDocument15", "FlagDocument16", "FlagDocument17", "FlagDocument18", "FlagDocument19", "FlagDocument20", "FlagDocument21"),
+    Logic = c("EmergencystateMode", 
+              "RegRegionNotLiveRegion", "RegRegionNotWorkRegion", "LiveRegionNotWorkRegion", "RegCityNotLiveCity", "RegCityNotWorkCity", "LiveCityNotWorkCity",
+              "FlagOwnCar", "FlagOwnRealty", "FlagEmpPhone", "FlagWorkPhone", "FlagContMobile", "FlagPhone", "FlagEmail",
+              "FlagDocument3", "FlagDocument4", "FlagDocument5", "FlagDocument6", "FlagDocument7", "FlagDocument8", "FlagDocument9", "FlagDocument11", "FlagDocument18"),
     FactorSLE = c(), 
-    FactorOHE = c("NameContractType", "NameTypeSuite", "NameIncomeType", "NameEducationType", "NameFamilyStatus", "NameHousingType", "OccupationType", "WeekdayApprProcessStart", "OrganizationType", "FondkapremontMode", "HousetypeMode", "WallsmaterialMode"),
+    FactorOHE = c("CodeGender", "NameContractType", "NameTypeSuite", "NameIncomeType", "NameEducationType", "NameFamilyStatus", "NameHousingType", "OccupationType", "OrganizationType", "FondkapremontMode", "HousetypeMode", "WallsmaterialMode"),
     ExtraVars = c("SkIdCurr"),
-    Redundant = c()
+    Redundant = c("FlagMobil", paste0("FlagDocument", c(2, 10, 12:17, 19:21)))
   )
   
   f$Numeric <- c(
