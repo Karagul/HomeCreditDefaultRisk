@@ -6,6 +6,13 @@
 
 
 # Preprocessig data ----
+
+#' 
+#'
+#' @param dt 
+#' @param .key 
+#' @param .size 
+#'
 common.modeling.splitDataset <- function(dt, .key, .size = .8) {
   require(dplyr)
   stopifnot(
@@ -119,6 +126,7 @@ local({
 #' @param .minObservationN 
 #'
 #' @references https://tech.yandex.com/catboost/doc/dg/concepts/algorithm-main-stages_cat-to-numberic-docpage/
+#' 
 common.modeling.smoothedLikelihoodEncoding <- function(colName, dt, alpha = .05, .minObservationN = 30L) {
   require(dplyr)
   require(tidyr)
@@ -290,33 +298,31 @@ common.modeling.convertToMatrix <- function(dt, .metadata) {
 #' @param .bagging_freq 
 #' @param .lambda_l1 L1 regularization term on weights
 #' @param .lambda_l2 L2 regularization term on weights
-#' @param .min_gain_to_split 
+#' @param .min_split_gain The minimal gain to perform split 
 #' @param .num_leaves 
 #' @param .scale_pos_weight 
+#' @param .max_bin Max number of bins that feature values will be bucketed in
+#' @param .min_data_in_leaf 
 #'
-#' @details http://testlightgbm.readthedocs.io/en/latest/Parameters-tuning.html
+#' @details
+#' - http://lightgbm.apachecn.org/en/latest/Parameters.html
+#' - http://lightgbm.readthedocs.io/en/latest/Parameters-Tuning.html
 #'
 #' @note see also https://www.kaggle.com/pranav84/lightgbm-fixing-unbalanced-data-lb-0-9680/code
-#' min_child_samples': 20,  # Minimum number of data need in a child(min_data_in_leaf)
-#' max_bin': 255,  # Number of bucketed bin for feature values
-#' subsample': 0.6,  # Subsample ratio of the training instance.
-#' subsample_freq': 0,  # frequence of subsample, <=0 means no enable
-#' colsample_bytree': 0.3,  # Subsample ratio of columns when constructing each tree.
-#' min_child_weight': 5,  # Minimum sum of instance weight (hessian) needed in a child (leaf)
-#' subsample_for_bin': 200000,  # Number of samples for constructing bin
 #'  
 common.modeling.getHyperparams <- function(.size = 100L,
                                            .learning_rate = .01,
-                                           .max_depth = -1, 
-                                           .num_leaves = 31,
-                                           .min_data_in_leaf = 20, 
+                                           .max_depth = -1L, 
+                                           .max_bin = 255L,
+                                           .num_leaves = 31L,
+                                           .min_data_in_leaf = 20L, 
                                            .min_sum_hessian_in_leaf = 1e-3,
                                            .feature_fraction = 1,
                                            .bagging_fraction = 1,
                                            .bagging_freq = 0,
                                            .lambda_l1 = 0,
                                            .lambda_l2 = 0,
-                                           .min_gain_to_split = 0,
+                                           .min_split_gain = 0,
                                            .scale_pos_weight = 1) {
   
   stopifnot(
@@ -325,6 +331,8 @@ common.modeling.getHyperparams <- function(.size = 100L,
   
   expand.grid(learning_rate = .learning_rate,
               max_depth = .max_depth,
+              max_bin = .max_bin,
+              num_leaves = .num_leaves,
               min_data_in_leaf = .min_data_in_leaf,
               min_sum_hessian_in_leaf = .min_sum_hessian_in_leaf,
               feature_fraction = .feature_fraction,
@@ -332,12 +340,11 @@ common.modeling.getHyperparams <- function(.size = 100L,
               bagging_freq = .bagging_freq,
               lambda_l1 = .lambda_l1,
               lambda_l2 = .lambda_l2,
-              min_gain_to_split = .min_gain_to_split,
+              min_split_gain = .min_split_gain,
               scale_pos_weight = .scale_pos_weight) %>% 
-    mutate(
-      num_leaves = 2^max_depth - 1
-    ) %>% 
-    sample_n(.size)
+    sample_n(
+      .size, replace = F
+    )
 }
 
 
@@ -368,7 +375,7 @@ common.modeling.train <- function(.train, .test, .params, .nrounds = 100L, .num_
                       nrounds = .nrounds,
                       early_stopping_rounds = .nrounds/5,
                       num_threads = .num_threads,
-                      save_binary = T,
+                      save_binary = F,
                       verbose = 1)
   } else {
     model <- lgb.train(data = .train,
