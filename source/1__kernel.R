@@ -42,73 +42,21 @@ data.columns.desc <- fread(sprintf("%s/HomeCredit_columns_description.csv", job$
 
 
 ### 2. Preprocessing data ----
-metadata <- model.getMetadata(datasets$Train)
-
-wdays <- c(5, 2, 6, 1, 4, 3, 7); names(wdays) <- c("friday", "tuesday", "saturday", "monday", "thursday", "wednesday", "sunday")
+model.metadata <- loan.getMetadata(datasets$Train)
 
 datasets <- datasets %>% 
   map(~ .x %>% 
-        ## clean logic errors
-        mutate(
-          CodeGender = if_else(CodeGender != "XNA", CodeGender, NA_character_), # XNA is invalid gender
-          OrganizationType = if_else(OrganizationType != "XNA", OrganizationType, NA_character_),
-          NameIncomeType = if_else(NameIncomeType != "Maternity leave", NameIncomeType, NA_character_), # there is no 'Maternity leave' in test dataset
-          NameFamilyStatus = if_else(NameFamilyStatus != "Unknown", NameFamilyStatus, NA_character_),
-          OwnCarAge = if_else(OwnCarAge %in% c(64, 65), NA_real_, OwnCarAge),
-          DaysEmployed = if_else(DaysEmployed == 365243, NA_integer_, DaysEmployed)
-        ) %>% 
-        ## logic features processing
-        mutate_at(
-          setdiff(metadata$Features$Logic, names(.x %>% select_if(is.integer))),
-          funs(if_else(!is.na(.),
-                       if_else(. %in% c("Y", "Yes"), 1L, 0L),
-                       NA_integer_)
-          )
-        ) %>%  
-        ## OHE features
-        mutate_at(
-          metadata$Features$FactorOHE,
-          funs(if_else(!is.na(.), str_replace_all(str_to_lower(.), "\\W", "_"), NA_character_))
-        ) %>% 
-        mutate(
-          WeekdayApprProcessStart = wdays[tolower(WeekdayApprProcessStart)],
-          HousetypeMode = if_else(!is.na(HousetypeMode), HousetypeMode, "block_of_flats"), # replace to mode value
-          FondkapremontMode = if_else(!is.na(FondkapremontMode), FondkapremontMode, "reg_oper_account") # replace to mode value
-        ) %>% 
-        ## processing missing data
-        # numeric
-        mutate_at(
-          metadata$Features$Numeric,
-          funs("missing" = if_else(is.na(.), 1L, 0L))
-        ) %>% 
-        mutate_at(
-          metadata$Features$Numeric,
-          funs(ifelse(!is.na(.), ., 0))
-        ) %>% 
-        # logic
-        mutate_at(
-          metadata$Features$Logic,
-          funs("missing" = if_else(is.na(.), 1L, 0L))
-        ) %>%
-        mutate_at(
-          metadata$Features$Logic, # all must be integer
-          funs(if_else(!is.na(.), ., -1L))
-        ) %>%
-        # factor
-        mutate_at(
-          metadata$Features$FactorOHE,
-          funs("missing" = if_else(is.na(.), 1L, 0L))
-        ) %>%
-        mutate_at(
-          metadata$Features$FactorOHE, # all must be character
-          funs(if_else(!is.na(.), ., "none"))
-        ) %>%
-        ## remove redundant
-        select(
-          -one_of(metadata$Features$Redundant)
-        )
+        loan.clear(., model.metadata) %>% 
+        loan.format(., model.metadata) %>% 
+        loan.calcRequestsNumber %>% 
+        loan.calcDocumentNumber %>% 
+        loan.calcDefaultSocialCircleNumber %>% 
+        loan.processingOwnership %>% 
+        loan.processingIncome %>% 
+        loan.processingExternalSourceScore %>% 
+        loan.processingDays %>% 
+        loan.missingValuesProcessing(., model.metadata)
       )
-
 
 
 ## 2.2. Split data
@@ -129,17 +77,17 @@ rm(sDatasets)
 
 ## 2.3. Features encoding
 # calc encoders
-encoders.OH <- metadata$Features$FactorOHE %>% 
+encoders.OH <- model.metadata$Features$FactorOHE %>% 
   map(~ common.modeling.getOneHotEncoder(.x, datasets$Train))
 
-encoders.SLE <- metadata$Features$FactorSLE %>% 
+encoders.SLE <- model.metadata$Features$FactorSLE %>% 
   map(~ common.modeling.smoothedLikelihoodEncoding(.x, datasets$Train))
 
 
 # apply encoders
 datasets <- datasets %>%
-  map(~ common.modeling.applyEncoders(.x, encoders.OH, metadata$Features$FactorOHE)) %>%
-  map(~ common.modeling.applyEncoders(.x, encoders.SLE, metadata$Features$FactorSLE))
+  map(~ common.modeling.applyEncoders(.x, encoders.OH, model.metadata$Features$FactorOHE)) %>%
+  map(~ common.modeling.applyEncoders(.x, encoders.SLE, model.metadata$Features$FactorSLE))
 
 stopifnot(
   length(datasets) == 3,
@@ -152,7 +100,7 @@ stopifnot(
 ## replace missing values
 
 # for SLE-encoded features
-factorSLE.pattern <- sprintf("^(%s)+_SL", paste(metadata$Features$FactorSLE, collapse = "|"))
+factorSLE.pattern <- sprintf("^(%s)+_SL", paste(model.metadata$Features$FactorSLE, collapse = "|"))
 
 datasets <- datasets %>% 
   map(
@@ -160,7 +108,7 @@ datasets <- datasets %>%
   )
 
 # for OH-encoded features # warn: transformation modify not only OHE features
-factorOHE.pattern <- sprintf("^(%s)+_", paste(metadata$Features$FactorOHE, collapse = "|"))
+factorOHE.pattern <- sprintf("^(%s)+_", paste(model.metadata$Features$FactorOHE, collapse = "|"))
 datasets <- datasets %>% 
   map(
     ~ .x %>% mutate_at(vars(matches(factorOHE.pattern)), funs(ifelse(!is.na(.), ., 0)))
@@ -169,8 +117,8 @@ datasets <- datasets %>%
 stopifnot(
   all(
     list(
-        metadata$Features$FactorSLE,
-        metadata$Features$FactorOHE
+        model.metadata$Features$FactorSLE,
+        model.metadata$Features$FactorOHE
       ) %>% 
       map2(
         list(factorSLE.pattern, factorOHE.pattern),
@@ -196,16 +144,16 @@ rm(factorOHE.pattern)
 ## convert to lgb datasets
 categoricalFeatures <- NULL # one-hot encoding
 
-mTrain <- lgb.Dataset(data = common.modeling.convertToMatrix(datasets$Train, metadata),
+mTrain <- lgb.Dataset(data = common.modeling.convertToMatrix(datasets$Train, model.metadata),
                       label = datasets$Train$Label)
 
-mTest <- lgb.Dataset(data = common.modeling.convertToMatrix(datasets$Valid, metadata),
+mTest <- lgb.Dataset(data = common.modeling.convertToMatrix(datasets$Valid, model.metadata),
                      label = datasets$Valid$Label)
 
 ## compute hyperparams
-gridSearch <- common.modeling.getHyperparams(.size = 200L,
+gridSearch <- common.modeling.getHyperparams(.size = 20L,
                                              .learning_rate = c(.06, .08),
-                                             .max_depth = -1L,
+                                             .max_depth = 7L,
                                              .max_bin = 255L,
                                              .num_leaves = c(47, 55),
                                              .min_data_in_leaf = c(4, 6), 
@@ -222,9 +170,9 @@ gridSearch <- common.modeling.getHyperparams(.size = 200L,
 
 
 ## train model
-gridSearchX <- gridSearch %>% filter(AUC_diff < .02)
-modelParams <- gridSearchX[1, ] %>% select(-starts_with("AUC")) %>% as.list
-modelParams$learning_rate <- .01
+#gridSearchX <- gridSearch %>% filter(AUC_diff < .02)
+modelParams <- gridSearch[1, ] %>% select(-starts_with("AUC")) %>% as.list
+modelParams$learning_rate <- .02
 model <- common.modeling.train(mTrain, NULL, modelParams, 2e3)
 
 
@@ -232,7 +180,7 @@ model <- common.modeling.train(mTrain, NULL, modelParams, 2e3)
 predictions <- datasets %>%
   map(~ .x %>% 
         select(SkIdCurr, Label) %>% 
-        cbind(., Score = predict(model, common.modeling.convertToMatrix(.x, metadata)))
+        cbind(., Score = predict(model, common.modeling.convertToMatrix(.x, model.metadata)))
   )
 
 stopifnot(
@@ -249,7 +197,7 @@ metrics <- list(
                    ~ common.modeling.evaluateModel(.x %>% select(Label, Score))),
   Hyperparams = modelParams,
   FeatureImportance = lgb.importance(model, percentage = T) %>% head(50),
-  Metadata = metadata
+  Metadata = model.metadata
 )
 
 common.modeling.saveArtifacts(
@@ -264,14 +212,14 @@ common.modeling.saveArtifacts(
 
 ### 6. Reflection ----
 library(ggplot2)
-ggplot(predictions$Valid) +
+ggplot(predictions$Train) +
   geom_density(aes(x = Score, color = factor(Label)), alpha = .4) +
-  geom_vline(xintercept = .5, linetype = "dashed", color = "darkred") +
+  geom_vline(xintercept = .5, linetype = "dashed", color = "grey") +
   labs(title = "", subtitle = "", x = "", y = "", caption = "") +
   theme_bw()
 
 # see https://github.com/Microsoft/LightGBM/blob/master/R-package/R/lgb.plot.interpretation.R
-tree_interpretation <- lgb.interprete(model, common.modeling.convertToMatrix(datasets$Test, metadata), 1:100)
+tree_interpretation <- lgb.interprete(model, common.modeling.convertToMatrix(datasets$Test, model.metadata), 1:100)
 lgb.plot.interpretation(tree_interpretation[[1]], top_n = 30)
 
 View(
