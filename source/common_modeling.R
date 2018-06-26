@@ -10,6 +10,33 @@
 #' 
 #'
 #' @param dt 
+#' @param .minSD 
+#' @param .minNotNA 
+#'
+common.modeling.getRedundantFields <- function(dt, .filterSD = .01, .filterMissedRatio = .01) {
+  require(dplyr)
+  require(purrr)
+  require(psych)
+  
+  stopifnot(
+    is.data.frame(dt),
+    is.numeric(.filterSD),
+    is.numeric(.filterMissedRatio)
+  )
+  
+  
+  describe(dt) %>% 
+    filter(sd < .filterSD | n/nrow(dt) < .filterMissedRatio) %>% 
+    select(vars) %>% 
+    as_vector
+}
+
+
+
+
+#' 
+#'
+#' @param dt 
 #' @param .key 
 #' @param .size 
 #'
@@ -149,20 +176,20 @@ common.modeling.smoothedLikelihoodEncoding <- function(colName, dt, alpha = .05,
   globalMean <- feature.stats %>% 
     filter(n >= .minObservationN) %>% 
     transmute(
-      FraudMeanTarget = (`1` + alpha)/(n + 1)
+      MeanTarget = (`1` + alpha)/(n + 1)
     )
   
-  globalMean <- mean(globalMean$FraudMeanTarget)
+  globalMean <- mean(globalMean$MeanTarget)
   stopifnot(
     !(is.na(globalMean) | is.nan(globalMean))
   )
   
   result <- feature.stats %>% 
     mutate(
-      FraudMeanTarget = ((`1` + alpha)/(n + 1) * n + globalMean * alpha)/(n + 1)
+      MeanTarget = ((`1` + alpha)/(n + 1) * n + globalMean * alpha)/(n + 1)
     ) %>% 
     select(
-      one_of("FraudMeanTarget", colName)
+      one_of("MeanTarget", colName)
     )
   
   names(result) <- c(paste0(colName, "_SL"), colName)
