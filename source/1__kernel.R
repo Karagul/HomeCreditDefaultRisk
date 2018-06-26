@@ -8,46 +8,67 @@
 ### 0. Dependencies ----
 source("0__common.R")
 job <- job.startup("preprocessing_data")
+
 suppressPackageStartupMessages({
+  library(data.table)
+  
   library(parallel)
   library(foreach)
   
   library(lightgbm)
 })
+
+source("loan.R")
+source("previous_loan.R")
+source("bureau.R")
+
 source("common_modeling.R")
-source("credit_modeling.R")
 
 
 
 ### 1. Load datasets ----
-datasets <- list(
-    Train = fread.csv.zipped("application_train.csv", job$Config$DataDir),
-    Test = fread.csv.zipped("application_test.csv", job$Config$DataDir) %>% mutate(Target = NA_integer_)
-  ) %>% 
-  map(
-    ~ .x %>% rename(Label = Target)
-  )
-  
+## Colums description
+data.columns.desc <- fread(sprintf("%s/HomeCredit_columns_description.csv", job$Config$DataDir))
+
+
+## Bureau dataset
+bureau.history <- bureau.load(job$Config) %>% bureau.getHistory # readRDS("cache/bureau.history.rds")
+saveRDS(bureau.history, "cache/bureau.history.rds")
+
+bureau.history.stats <- bureau.getHistoryStats(bureau.history, .replaceNA = 0)
 stopifnot(
-  length(datasets) == 2,
-  nrow(datasets$Test) > 0,
-  nrow(datasets$Train) > nrow(datasets$Test),
-  is_empty(setdiff(names(datasets$Train), names(datasets$Test))),
-  !anyNA(datasets$Train$Label)
+  !anyNA(bureau.history.stats)
 )
 
 
-data.columns.desc <- fread(sprintf("%s/HomeCredit_columns_description.csv", job$Config$DataDir))
+
+## Previous loan applictions
+prevLoans <- prevLoan.load(job$Config) %>% 
+  prevLoan.filter %>% 
+  prevLoan.preprocessing
+
+prevLoans.history <- prevLoan.getHistory(prevLoans)
+saveRDS(prevLoans.history, "cache/prevLoans.history.rds")
+
+prevLoans.history.stats <- prevLoan.getHistoryStats(prevLoans.history, .replaceNA = 0)
+stopifnot(
+  !anyNA(prevLoans.history.stats)
+)
+
+
+
+## Loans dataset
+loans <- loan.load(job$Config)
 
 
 
 ### 2. Preprocessing data ----
-model.metadata <- loan.getMetadata(datasets$Train)
+loan.metadata <- loan.getMetadata(loans$Train)
 
-datasets <- datasets %>% 
+loans <- loans %>% 
   map(~ .x %>% 
-        loan.clear(., model.metadata) %>% 
-        loan.format(., model.metadata) %>% 
+        loan.clear(., loan.metadata) %>% 
+        loan.format(., loan.metadata) %>% 
         loan.calcRequestsNumber %>% 
         loan.calcDocumentNumber %>% 
         loan.calcDefaultSocialCircleNumber %>% 
@@ -55,8 +76,33 @@ datasets <- datasets %>%
         loan.processingIncome %>% 
         loan.processingExternalSourceScore %>% 
         loan.processingDays %>% 
-        loan.missingValuesProcessing(., model.metadata)
+        loan.missingValuesProcessing(., loan.metadata)
       )
+
+
+
+# join w/ bureau
+datasets <- loans %>% 
+  map(~ .x %>% left_join(prevLoans.history.stats, by = "SkIdCurr"))
+  # map(~ .x %>% left_join(bureau.history.stats, by = "SkIdCurr"))
+
+stopifnot(
+  length(datasets) == length(loans),
+  nrow(datasets$Train) == nrow(loans$Train),
+  nrow(datasets$Test) == nrow(loans$Test)
+)
+
+redundantFieldsIndx <- common.modeling.getRedundantFields(datasets$Test)
+redundantFieldsNames <- setdiff(names(datasets$Test)[redundantFieldsIndx], names(loans$Test))
+
+stopifnot(
+  length(redundantFieldsNames) > 0,
+  !any(setdiff(redundantFieldsNames, names(datasets$Test)))
+)
+
+datasets <- datasets %>% 
+  map(~ .x %>% select(-one_of(redundantFieldsNames)))
+
 
 
 ## 2.2. Split data
@@ -74,20 +120,19 @@ stopifnot(
 rm(sDatasets)
 
 
-
 ## 2.3. Features encoding
 # calc encoders
-encoders.OH <- model.metadata$Features$FactorOHE %>% 
+encoders.OH <- loan.metadata$Features$FactorOHE %>% 
   map(~ common.modeling.getOneHotEncoder(.x, datasets$Train))
 
-encoders.SLE <- model.metadata$Features$FactorSLE %>% 
+encoders.SLE <- loan.metadata$Features$FactorSLE %>% 
   map(~ common.modeling.smoothedLikelihoodEncoding(.x, datasets$Train))
 
 
 # apply encoders
 datasets <- datasets %>%
-  map(~ common.modeling.applyEncoders(.x, encoders.OH, model.metadata$Features$FactorOHE)) %>%
-  map(~ common.modeling.applyEncoders(.x, encoders.SLE, model.metadata$Features$FactorSLE))
+  map(~ common.modeling.applyEncoders(.x, encoders.OH, loan.metadata$Features$FactorOHE)) %>%
+  map(~ common.modeling.applyEncoders(.x, encoders.SLE, loan.metadata$Features$FactorSLE))
 
 stopifnot(
   length(datasets) == 3,
@@ -100,7 +145,7 @@ stopifnot(
 ## replace missing values
 
 # for SLE-encoded features
-factorSLE.pattern <- sprintf("^(%s)+_SL", paste(model.metadata$Features$FactorSLE, collapse = "|"))
+factorSLE.pattern <- sprintf("^(%s)+_SL", paste(loan.metadata$Features$FactorSLE, collapse = "|"))
 
 datasets <- datasets %>% 
   map(
@@ -108,7 +153,7 @@ datasets <- datasets %>%
   )
 
 # for OH-encoded features # warn: transformation modify not only OHE features
-factorOHE.pattern <- sprintf("^(%s)+_", paste(model.metadata$Features$FactorOHE, collapse = "|"))
+factorOHE.pattern <- sprintf("^(%s)+_", paste(loan.metadata$Features$FactorOHE, collapse = "|"))
 datasets <- datasets %>% 
   map(
     ~ .x %>% mutate_at(vars(matches(factorOHE.pattern)), funs(ifelse(!is.na(.), ., 0)))
@@ -117,8 +162,8 @@ datasets <- datasets %>%
 stopifnot(
   all(
     list(
-        model.metadata$Features$FactorSLE,
-        model.metadata$Features$FactorOHE
+        loan.metadata$Features$FactorSLE,
+        loan.metadata$Features$FactorOHE
       ) %>% 
       map2(
         list(factorSLE.pattern, factorOHE.pattern),
@@ -144,21 +189,30 @@ rm(factorOHE.pattern)
 ## convert to lgb datasets
 categoricalFeatures <- NULL # one-hot encoding
 
-mTrain <- lgb.Dataset(data = common.modeling.convertToMatrix(datasets$Train, model.metadata),
-                      label = datasets$Train$Label)
+datasets <- datasets.origin %>% 
+  map(~ .x %>% 
+        select(
+          -ends_with("Avg"), -ends_with("Mode"), -ends_with("Medi")
+          -ExtSource1, -ExtSource2, -AmtGoodsPrice
+        ))
 
-mTest <- lgb.Dataset(data = common.modeling.convertToMatrix(datasets$Valid, model.metadata),
-                     label = datasets$Valid$Label)
+mTrain <- lgb.Dataset(data = common.modeling.convertToMatrix(datasets$Train, loan.metadata),
+                      label = datasets$Train$Label, 
+                      categorical_feature = categoricalFeatures)
+
+mTest <- lgb.Dataset(data = common.modeling.convertToMatrix(datasets$Valid, loan.metadata),
+                     label = datasets$Valid$Label, 
+                     categorical_feature = categoricalFeatures)
 
 ## compute hyperparams
 gridSearch <- common.modeling.getHyperparams(.size = 20L,
                                              .learning_rate = c(.06, .08),
-                                             .max_depth = 7L,
+                                             .max_depth = 8L,
                                              .max_bin = 255L,
                                              .num_leaves = c(47, 55),
                                              .min_data_in_leaf = c(4, 6), 
                                              .min_sum_hessian_in_leaf = c(.001),
-                                             .feature_fraction = c(.5, .55, .6),
+                                             .feature_fraction = c(.55, .65, .75),
                                              .bagging_fraction = c(.9, .95, 1),
                                              .bagging_freq = 6,
                                              .lambda_l1 = c(0.001, 0.01),
@@ -168,19 +222,22 @@ gridSearch <- common.modeling.getHyperparams(.size = 20L,
                                              ) %>% 
   common.modeling.selectHyperparams(mTrain, mTest, ., .nrounds = 32L)
 
+View(gridSearch)
 
 ## train model
-#gridSearchX <- gridSearch %>% filter(AUC_diff < .02)
 modelParams <- gridSearch[1, ] %>% select(-starts_with("AUC")) %>% as.list
-modelParams$learning_rate <- .02
-model <- common.modeling.train(mTrain, NULL, modelParams, 2e3)
+modelParams$learning_rate <- .01
+
+
+# TODO: CV
+model <- common.modeling.train(mTrain, NULL, modelParams, 1e4)
 
 
 ## predict
 predictions <- datasets %>%
   map(~ .x %>% 
         select(SkIdCurr, Label) %>% 
-        cbind(., Score = predict(model, common.modeling.convertToMatrix(.x, model.metadata)))
+        cbind(., Score = predict(model, common.modeling.convertToMatrix(.x, loan.metadata)))
   )
 
 stopifnot(
@@ -197,7 +254,7 @@ metrics <- list(
                    ~ common.modeling.evaluateModel(.x %>% select(Label, Score))),
   Hyperparams = modelParams,
   FeatureImportance = lgb.importance(model, percentage = T) %>% head(50),
-  Metadata = model.metadata
+  Metadata = loan.metadata
 )
 
 common.modeling.saveArtifacts(
@@ -219,7 +276,7 @@ ggplot(predictions$Train) +
   theme_bw()
 
 # see https://github.com/Microsoft/LightGBM/blob/master/R-package/R/lgb.plot.interpretation.R
-tree_interpretation <- lgb.interprete(model, common.modeling.convertToMatrix(datasets$Test, model.metadata), 1:100)
+tree_interpretation <- lgb.interprete(model, common.modeling.convertToMatrix(datasets$Test, loan.metadata), 1:100)
 lgb.plot.interpretation(tree_interpretation[[1]], top_n = 30)
 
 View(
