@@ -5,12 +5,18 @@
 #'
 
 
-
-bureau.load <- function(.config) {
+#'
+#'
+#' @param .config 
+#' 
+bureau.load <- function(.config, .replaceNA = 0) {
   require(dplyr)
   require(stringr)
-  source("common_modeling.R")
-  
+  stopifnot(
+    is.list(.config),
+    is.numeric(.replaceNA)
+  )
+
   # calculte balances stats 
   calcBalancesStats <- function() {
     require(tidyr)
@@ -20,37 +26,22 @@ bureau.load <- function(.config) {
       summarise(
         N = log(n()),
         Min = min(MonthsBalance),
+        Median = median(MonthsBalance),
         Max = max(MonthsBalance)
       )
     
-    bureauBalances.grouped %>% select(-Min, -Max) %>%  spread(Status, N, sep = "_N_", fill = 0) %>% 
+    bureauBalances.grouped %>% select(-Min, -Max, -Median) %>% spread(Status, N, sep = "_N_", fill = .replaceNA) %>% 
       inner_join(
-        bureauBalances.grouped %>% select(-Min, -N) %>% spread(Status, Max, sep = "_max_", fill = 0),
+        bureauBalances.grouped %>% select(-Min, -N, -Median) %>% spread(Status, Max, sep = "_max_", fill = .replaceNA),
         by = "SkIdBureau") %>% 
       inner_join(
-        bureauBalances.grouped %>% select(-Max, -N) %>% spread(Status, Min, sep = "_min_", fill = 0),
+        bureauBalances.grouped %>% select(-Max, -N, -Median) %>% spread(Status, Min, sep = "_min_", fill = .replaceNA),
+        by = "SkIdBureau") %>% 
+      inner_join(
+        bureauBalances.grouped %>% select(-Min, -Max, -N) %>% spread(Status, Median, sep = "_median_", fill = .replaceNA),
         by = "SkIdBureau")
   }
   
-  
-  ## some info
-  # SkIdCurr               1 1716428  278214.93  102938.56   100001.0    456255    356254  78.57  
-  # SkIdBureau             2 1716428 5924434.49  532265.73  5000000.0   6843457   1843457 406.27    PK
-  # CreditActive           3 1716428        NaN         NA        Inf      -Inf      -Inf     NA    isActiveCredit
-  # CreditCurrency         4 1716428        NaN         NA        Inf      -Inf      -Inf     NA    isCurrency_1
-  # DaysCredit             5 1716428   -1142.11     795.16    -2922.0         0      2922   0.61    
-  # CreditDayOverdue       6 1716428       0.82      36.54        0.0      2792      2792   0.03    
-  # DaysCreditEnddate      7 1610875     510.52    4994.22   -42060.0     31199     73259   3.93    NA
-  # DaysEnddateFact        8 1082775   -1017.44     714.01   -42023.0         0     42023   0.69    NA
-  # AmtCreditMaxOverdue    9  591940    3825.42  206031.61        0.0 115987185 115987185 267.79    NA + log
-  # CntCreditProlong      10 1716428       0.01       0.10        0.0         9         9   0.00
-  # AmtCreditSum          11 1716415  354994.59 1149811.34        0.0 585000000 585000000 877.64    NA
-  # AmtCreditSumDebt      12 1458759  137085.12  677401.13 -4705600.3 170100000 174805600 560.86    NA
-  # AmtCreditSumLimit     13 1124648    6229.51   45032.03  -586406.1   4705600   5292006  42.46    NA
-  # AmtCreditSumOverdue   14 1716428      37.91    5937.65        0.0   3756681   3756681   4.53
-  # CreditType            15 1716428        NaN         NA        Inf      -Inf      -Inf     NA
-  # DaysCreditUpdate      16 1716428    -593.75     720.75   -41947.0       372     42319   0.55
-  # AmtAnnuity            17  489637   15712.76  325826.95        0.0 118453424 118453424 465.64    NA
   
   fread.csv.zipped("bureau.csv", .config$DataDir) %>% 
     mutate_if(
@@ -61,12 +52,12 @@ bureau.load <- function(.config) {
       CreditCurrency = if_else(CreditCurrency == "currency_1", 0L, 1L),
       DaysCredit = abs(DaysCredit)
     ) %>% 
-    left_join(
-      calcBalancesStats(), by = "SkIdBureau"
-    ) %>% 
     filter(
       CreditActive %in% c("closed", "active")
-    )
+    ) # %>% 
+    # left_join(
+    #   calcBalancesStats(), by = "SkIdBureau"
+    # )
 }
 
 
@@ -77,45 +68,126 @@ bureau.load <- function(.config) {
 #'
 bureau.getHistory <- function(dt) {
   require(dplyr)
-  stopifnot(is.data.frame(dt))
+  stopifnot(
+    is.data.frame(dt)
+  )
   
-  dt %>% 
-    group_by(
-      SkIdCurr, CreditType, CreditActive
+  
+  groupByFields <- c("SkIdCurr", "CreditType", "CreditActive")
+  
+  dt.g <- dt %>% 
+    transmute(
+      # group by fields
+      SkIdCurr, CreditType, CreditActive,
+      # calc stats for fields
+      CreditCurrency,
+      DaysCredit,
+      CreditDayUnderdue = DaysCreditEnddate - DaysEnddateFact,
+      DaysCreditEnddate = abs(DaysCreditEnddate),
+      CreditDayOverdue,
+      CntCreditProlong,
+      AmtCreditSum,
+      AmtCreditSumDebt,
+      AmtCreditSumLimit,
+      AmtCreditSumOverdue,
+      DaysCreditUpdate,
+      AmtAnnuity
     ) %>% 
+    group_by_at(
+      groupByFields
+    )
+  
+  
+  dt.g %>% 
     summarise(
       N = n(),
-      CreditCurrencyRisk = sum(CreditCurrency, na.rm = T),
-      
-      Bureau_DaysCredit_max = max(DaysCredit, na.rm = T) %/% 30,
-      Bureau_DaysCredit_min = max(DaysCredit, na.rm = T) %/% 30,
-      Bureau_DaysCredit_range = Bureau_DaysCredit_max - Bureau_DaysCredit_min,
-      
-      Bureau_CreditDayOverdue_sum = sum(CreditDayOverdue, na.rm = T),
-      Bureau_CreditDayOverdue_median = median(CreditDayOverdue/N, na.rm = T),
-      Bureau_AmtCreditMaxOverdue_sum = sum(AmtCreditMaxOverdue, na.rm = T),
-      Bureau_AmtCreditMaxOverdue_median = median(AmtCreditMaxOverdue/N, na.rm = T),
-      
-      Bureau_DaysCreditEnddate_DaysEnddateFact_diff = sum(DaysCreditEnddate - DaysEnddateFact, na.rm = T),
-      Bureau_DaysCreditEnddate_DaysEnddateFact_median = median((DaysCreditEnddate - DaysEnddateFact)/N, na.rm = T),
-      
-      Bureau_CntCreditProlong_max = max(CntCreditProlong, na.rm = T),
-      Bureau_CntCreditProlong_min = max(CntCreditProlong, na.rm = T),
-      Bureau_CntCreditProlong_range = Bureau_CntCreditProlong_max - Bureau_CntCreditProlong_min,
-      
-      Bureau_AmtCreditSum_sum = sum(AmtCreditSum, na.rm = T),
-      Bureau_AmtCreditSum_median = median(AmtCreditSum/N, na.rm = T),
-      
-      Bureau_AmtCreditSumDebt_sum = sum(AmtCreditSumDebt, na.rm = T),
-      Bureau_AmtCreditSumDebt_median = median(AmtCreditSumDebt/N, na.rm = T),
-      
-      Bureau_AmtCreditSumLimit_sum = sum(AmtCreditSumLimit, na.rm = T),
-      Bureau_AmtCreditSumLimit_median = median(AmtCreditSumLimit/N, na.rm = T),
-      
-      Bureau_AmtCreditSumOverdue_sum = sum(AmtCreditSumOverdue, na.rm = T),
-      Bureau_AmtCreditSumOverdue_median = median(AmtCreditSumOverdue/N, na.rm = T)
+      CreditCurrencyRisk = sum(CreditCurrency, na.rm = T)
+    ) %>% 
+    inner_join(
+      dt.g %>% summarise_if(is.numeric, funs("min" = min(., na.rm = T))),
+      by = groupByFields
+    )  %>% 
+    inner_join(
+      dt.g %>% summarise_if(is.numeric, funs("median" = median(., na.rm = T))),
+      by = groupByFields
+    ) %>% 
+    inner_join(
+      dt.g %>% summarise_if(is.numeric, funs("max" = max(., na.rm = T))),
+      by = groupByFields
+    ) %>% 
+    inner_join(
+      dt.g %>% summarise_if(is.numeric, funs("sum" = sum(., na.rm = T))),
+      by = groupByFields
+    ) %>% 
+    inner_join(
+      dt.g %>% summarise_if(is.numeric, funs("mad" = mad(., na.rm = T))),
+      by = groupByFields
+    ) %>% 
+    mutate_if(
+      is.numeric, 
+      funs(if_else(is.nan(.) | is.infinite(.), NA_real_, as.numeric(.)))
+    ) %>% 
+    ungroup() %>% 
+    select(
+      -starts_with("CreditCurrency_")
     )
 }
 
+
+
+
+#' 
+#'
+#' @param dt 
+#' @param .minObservationNumber 
+#' @param .minSD 
+#' @param .minNotNA 
+#'
+bureau.getHistoryStats <- function(dt, .minObservationNumber = 100, .minSD = .01, .minNotNA = .01, .replaceNA = NA_real_) {
+  require(dplyr)
+  require(data.table)
+  require(purrr)
+  require(psych)
+  
+  stopifnot(
+    is.data.frame(dt),
+    is.numeric(.minObservationNumber),
+    is.numeric(.minSD),
+    is.numeric(.minNotNA), 
+    is.numeric(.replaceNA)
+  )
+  
+  
+  groupByFields <- c("SkIdCurr", "CreditType", "CreditActive")
+  
+  dt <- dt %>% 
+    group_by(CreditType, CreditActive) %>% 
+    filter(n() >= .minObservationNumber) %>% 
+    ungroup() %>% 
+    as.data.table(., key = groupByFields)
+  
+  dt <- melt(dt, id.var = groupByFields, variable.name = "Metrics")
+  dt <- dt[, Metrics := paste("bureau", CreditType, CreditActive, Metrics, sep = "__")]
+  
+  dt <- dcast.data.table(dt, SkIdCurr ~ Metrics, value.var = "value")
+  
+  
+  dt.desc <- describe(dt %>%
+                        mutate_if(
+                          is.numeric, funs(if_else(is.nan(.) | is.infinite(.), NA_real_, as.numeric(.)))
+                        ))
+  
+  redundantFieldsIndex <- dt.desc %>% 
+    filter(sd < .minSD | n/nrow(dt) < .minNotNA) %>% 
+    select(vars) %>% 
+    as_vector
+  
+  dt %>% 
+    select(-one_of(names(dt)[redundantFieldsIndex])) %>% 
+    mutate_if(
+      is_double,
+      funs(replace_na(., .replaceNA))
+    )
+}
 
 

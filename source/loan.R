@@ -25,8 +25,8 @@ loan.getMetadata <- function(dt) {
               "RegRegionNotLiveRegion", "RegRegionNotWorkRegion", "LiveRegionNotWorkRegion", "RegCityNotLiveCity", "RegCityNotWorkCity", "LiveCityNotWorkCity",
               "FlagOwnCar", "FlagOwnRealty", "FlagEmpPhone", "FlagWorkPhone", "FlagContMobile", "FlagPhone", "FlagEmail",
               "FlagDocument3", "FlagDocument4", "FlagDocument5", "FlagDocument6", "FlagDocument7", "FlagDocument8", "FlagDocument9", "FlagDocument11", "FlagDocument18"),
-    FactorSLE = c(), 
-    FactorOHE = c("NameContractType", "NameTypeSuite", "NameIncomeType", "NameEducationType", "NameFamilyStatus", "NameHousingType", "OccupationType", "OrganizationType", "FondkapremontMode", "HousetypeMode", "WallsmaterialMode"),
+    FactorSLE = c("NameContractType", "NameTypeSuite", "NameIncomeType", "NameEducationType", "NameFamilyStatus", "NameHousingType", "OccupationType", "OrganizationType", "FondkapremontMode", "HousetypeMode", "WallsmaterialMode"), 
+    FactorOHE = c(),
     ExtraVars = c("SkIdCurr"),
     Redundant = c("FlagMobil", paste0("FlagDocument", c(2, 10, 12:17, 19:21)))
   )
@@ -60,17 +60,51 @@ loan.getMetadata <- function(dt) {
 
 
 
+
+#' 
+#'
+#' @param .config 
+#'
+loan.load <- function(.config) {
+  require(dplyr)
+  require(purrr)
+  stopifnot(is.list(.config))
+  
+  
+  dt <- list(
+      Train = fread.csv.zipped("application_train.csv", .config$DataDir),
+      Test = fread.csv.zipped("application_test.csv", .config$DataDir) %>% mutate(Target = NA_integer_)
+    ) %>%
+    map(
+      ~ .x %>% rename(Label = Target)
+    )
+  
+  
+  stopifnot(
+    length(dt) == 2,
+    nrow(dt$Test) > 0,
+    nrow(dt$Train) > nrow(dt$Test),
+    is_empty(setdiff(names(dt$Train), names(dt$Test))),
+    !anyNA(dt$Train$Label)
+  )
+  
+  dt
+}
+
+
 #' Clear logic errors in loans application dataset
 #'
 #' @param dt 
 #' @param .metadata 
 #' 
 loan.clear <- function(dt, .metadata) {
+  require(dplyr)
+  
   stopifnot(
     is.data.frame(dt),
     is.list(.metadata)
   )
-  require(dplyr)
+  
   
   dt %>% 
     filter(
@@ -98,12 +132,13 @@ loan.clear <- function(dt, .metadata) {
 #' @param .metadata 
 #' 
 loan.format <- function(dt, .metadata) {
+  require(dplyr)
+  require(stringr)
+  
   stopifnot(
     is.data.frame(dt),
     is.list(.metadata)
   )
-  require(dplyr)
-  require(stringr)
   
   
   wdays <- c(5, 2, 6, 1, 4, 3, 7); 
@@ -120,7 +155,7 @@ loan.format <- function(dt, .metadata) {
     ) %>%  
     # format factor features
     mutate_at(
-      .metadata$Features$FactorOHE,
+      c(.metadata$Features$FactorOHE, .metadata$Features$FactorSLE),
       funs(if_else(!is.na(.), str_replace_all(str_to_lower(.), "\\W", "_"), NA_character_))
     ) %>% 
     mutate(
@@ -137,46 +172,32 @@ loan.format <- function(dt, .metadata) {
 #' @param .metadata 
 #' 
 loan.missingValuesProcessing <- function(dt, .metadata) {
+  require(dplyr)
   stopifnot(
     is.data.frame(dt),
     is.list(.metadata)
   )
-  require(dplyr)
   
   
-  dt %>% 
-    ## logic features processing
+  dt %>%
     mutate(
       HousetypeMode = if_else(!is.na(HousetypeMode), HousetypeMode, "block_of_flats"), # replace to mode value
-      FondkapremontMode = if_else(!is.na(FondkapremontMode), FondkapremontMode, "reg_oper_account") # replace to mode value
-    ) %>% 
-    ## processing missing data
-    # numeric
-    mutate_at(
-      intersect(model.metadata$Features$Numeric, names(dt)),
-      funs("missing" = if_else(is.na(.), 1L, 0L))
+      FondkapremontMode = if_else(!is.na(FondkapremontMode), FondkapremontMode, "reg_oper_account"), # replace to mode value
+      OwnCarAge = if_else(!is.na(OwnCarAge), OwnCarAge, 0)
     ) %>% 
     mutate_at(
-      intersect(model.metadata$Features$Numeric, names(dt)),
-      funs(ifelse(!is.na(.), ., 0))
+      vars(starts_with("OwnCarAge")),
+      funs(if_else(!is.na(.), ., 0))
     ) %>% 
     # logic
     mutate_at(
-      intersect(model.metadata$Features$Logic, names(dt)),
-      funs("missing" = if_else(is.na(.), 1L, 0L))
-    ) %>%
-    mutate_at(
-      intersect(model.metadata$Features$Logic, names(dt)), # all must be integer
+      intersect(.metadata$Features$Logic, names(dt)), # all must be integer
       funs(if_else(!is.na(.), ., -1L))
     ) %>%
     # factor
     mutate_at(
-      intersect(model.metadata$Features$FactorOHE, names(dt)),
-      funs("missing" = if_else(is.na(.), 1L, 0L))
-    ) %>%
-    mutate_at(
-      intersect(model.metadata$Features$FactorOHE, names(dt)), # all must be character
-      funs(if_else(!is.na(.), ., "none"))
+      intersect(c(.metadata$Features$FactorOHE, .metadata$Features$FactorSLE), names(dt)), # all must be character
+      funs(if_else(!is.na(.), ., "-1"))
     )
 }
 
@@ -188,7 +209,7 @@ loan.missingValuesProcessing <- function(dt, .metadata) {
 #' @param dt 
 #' @param .fieldPattern 
 #'
-loan.calcCounter <- function(dt, .fieldPattern) {
+loan.calcStatsBy <- function(dt, .fieldPattern) {
   stopifnot(
     is.data.frame(dt),
     is.character(.fieldPattern)
@@ -222,12 +243,13 @@ loan.calcCounter <- function(dt, .fieldPattern) {
 #'
 #' @param dt 
 #'
-loan.calcRequestsNumber <- function(dt) {
+loan.calcRequestsNumber <- function(dt, .replaceNA = 0) {
+  stopifnot(is.numeric(.replaceNA))
+  
   dt %>% 
-    loan.calcCounter(., "AmtReq") %>% 
+    loan.calcStatsBy(., "AmtReq") %>% 
     mutate(
-      AmtReq_missed = if_else(!is.na(AmtReq_count), 0L, 1L),
-      AmtReq_count = replace_na(AmtReq_count, 0),
+      AmtReq_count = replace_na(AmtReq_count, .replaceNA),
       AmtReq_count = log(AmtReq_count + 1)
     )
 }
@@ -240,7 +262,7 @@ loan.calcRequestsNumber <- function(dt) {
 #'
 loan.calcDocumentNumber <- function(dt) {
   dt %>% 
-    loan.calcCounter(., "FlagDocument")
+    loan.calcStatsBy(., "FlagDocument")
 }
 
 
@@ -249,12 +271,13 @@ loan.calcDocumentNumber <- function(dt) {
 #'
 #' @param dt 
 #'
-loan.calcDefaultSocialCircleNumber <- function(dt) {
+loan.calcDefaultSocialCircleNumber <- function(dt, .replaceNA = 0) {
+  stopifnot(is.numeric(.replaceNA))
+  
   dt %>% 
-    loan.calcCounter(., "CntSocialCircle") %>% 
+    loan.calcStatsBy(., "CntSocialCircle") %>% 
     mutate(
-      CntSocialCircle_missed = if_else(!is.na(CntSocialCircle_count), 0L, 1L),
-      CntSocialCircle_count = replace_na(CntSocialCircle_count, 0),
+      CntSocialCircle_count = replace_na(CntSocialCircle_count, .replaceNA),
       CntSocialCircle_count = log(CntSocialCircle_count + 1)
     )
 }
@@ -271,7 +294,7 @@ loan.processingOwnership <- function(dt) {
   
   dt %>% 
     mutate(
-      OwnershipInteract = FlagOwnCar + FlagOwnRealty,
+      OwnershipInteract = FlagOwnCar + 2 * FlagOwnRealty,
       GenderOwnershipInteract = CodeGender + FlagOwnCar + FlagOwnRealty
     )
 }
@@ -293,14 +316,12 @@ loan.processingIncome <- function(dt) {
       
       IncomePerMember = AmtIncomeTotal/CntFamMembers,
       IncomePerAdult = AmtIncomeTotal/CntAdult,
+      IncomePerMemberChanging = IncomePerMember - (AmtIncomeTotal - AmtAnnuity)/CntFamMembers,
       
-      IncomePerMemberDiff = IncomePerMember - (AmtIncomeTotal - AmtAnnuity)/CntFamMembers,
-      IncomePerAdultDiff = IncomePerAdult - (AmtIncomeTotal - AmtAnnuity)/CntAdult,
+      IncomeToCreditRatio = (12 * AmtIncomeTotal - AmtCredit)/(12 * AmtIncomeTotal),
+      IncomeToAnnuityRatio = (AmtIncomeTotal - AmtAnnuity)/AmtIncomeTotal,
       
-      IncomeToCreditRate = (12 * AmtIncomeTotal - AmtCredit)/(12 * AmtIncomeTotal),
-      IncomeToAnnuityRate = (AmtIncomeTotal - AmtAnnuity)/AmtIncomeTotal,
-      
-      CreditDuration = ceiling(AmtCredit/AmtAnnuity),
+      CreditDuration = AmtCredit/AmtAnnuity,
       CreditPercent = (AmtCredit - AmtGoodsPrice) / AmtCredit / CreditDuration * 12
     ) %>% 
     mutate_at(
@@ -325,7 +346,7 @@ loan.processingExternalSourceScore <- function(dt) {
       ExtSource2_w = if_else(!is.na(ExtSource2), 4L, 0L),
       ExtSource3_w = if_else(!is.na(ExtSource3), 2L, 0L),
       ExtSource_weight = ExtSource1_w + ExtSource2_w + ExtSource3_w,
-      ExtSource_sum = if_else(ExtSource_weight == 7,
+      ExtSource_mean = if_else(ExtSource_weight == 7,
                               (ExtSource1 + ExtSource2 + ExtSource3)/3,
                               if_else(ExtSource_weight == 6,
                                       (ExtSource2 + ExtSource3)/2,
@@ -344,7 +365,15 @@ loan.processingExternalSourceScore <- function(dt) {
       ExtSource2_3_diff = ExtSource2 - ExtSource3,
       ExtSource3_1_diff = ExtSource3 - ExtSource1
     ) %>% 
-    select(-ExtSource1_w, -ExtSource2_w, -ExtSource3_w)
+    mutate_at(
+      c(paste0("ExtSource", c(1:3))), 
+      funs("mean_ratio" = ./ExtSource_mean)
+    ) %>% 
+    select(
+      -ExtSource1_w, -ExtSource2_w, -ExtSource3_w
+    )
+  
+  # TODO: replace NAs to mean
 }
 
 
@@ -359,25 +388,37 @@ loan.processingDays <- function(dt) {
   stopifnot(is.data.frame(dt))
   require(dplyr)
   
+  features <- vars(names(dt %>% select(starts_with("Days"))))
   
   dt %>% 
     mutate_at(
-      vars(starts_with("Days")),
-      funs("y" = abs(. %/% 365.25))
+      features,
+      funs("years" = abs(. %/% 365.25))
     ) %>% 
     mutate_at(
-      vars(ends_with("_y")),
-      funs("rate" = ./DaysBirth_y)
-    ) %>% 
+      features,
+      funs("DaysBirth_ratio" = ./DaysBirth)
+    )  %>% 
     mutate_at(
-      vars(one_of(c("DaysEmployed_y", "DaysRegistration_y", "DaysIdPublish_y", "DaysLastPhoneChange_y"))),
+      features,
+      funs("DaysEmployed_ratio" = ./DaysEmployed)
+    ) %>% 
+    mutate(
+      OwnCarAge_DaysBirth_ratio = OwnCarAge/DaysBirth_years,
+      OwnCarAge_DaysEmployed_ratio = OwnCarAge/DaysEmployed_years
+    ) %>% 
+    # normalization
+    mutate_at(
+      vars(one_of(c("DaysEmployed_years", "DaysRegistration_years", "DaysIdPublish_years", "DaysLastPhoneChange_years"))),
       funs(log(. + 1))
-    ) %>% 
+    )  %>% 
+    # remove redundant
     select(
-      -DaysBirth_y_rate, -DaysBirth, -DaysEmployed, -DaysRegistration, -DaysIdPublish, -DaysLastPhoneChange
+      -DaysEmployed, -DaysRegistration, -DaysIdPublish, -DaysLastPhoneChange, -DaysBirth,
+      -DaysBirth_DaysBirth_ratio, -DaysEmployed_DaysEmployed_ratio
     )
   
-    # task: replace NAs
+    # TODO: replace NAs
     # inner_join(.train %>%
     #              transmute(DaysEmployed, DaysBirth, ClientAge = abs(DaysBirth %/% 365.25)) %>% 
     #              group_by(ClientAge) %>% 
@@ -394,10 +435,5 @@ loan.processingDays <- function(dt) {
     #   -WorkingRate, -WorkExprience_min, -WorkExprience_median
     # )
 }
-
-
-
-
-
 
 
