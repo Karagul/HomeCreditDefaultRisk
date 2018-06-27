@@ -26,7 +26,7 @@ common.modeling.getRedundantFields <- function(dt, .filterSD = .01, .filterMisse
   
   
   describe(dt) %>% 
-    filter(sd < .filterSD | n/nrow(dt) < .filterMissedRatio) %>% 
+    filter(sd <= .filterSD | n/nrow(dt) <= .filterMissedRatio) %>% 
     select(vars) %>% 
     as_vector
 }

@@ -41,7 +41,7 @@ prevLoan.preprocessing <- function(dt) {
   interestRates <- c(4:1); names(interestRates) <- c("high", "middle", "low_normal", "low_action")
   
   
- prevLoans %>% 
+ dt %>% 
     ## character features preprocessing
     mutate_if(
       is.character,
