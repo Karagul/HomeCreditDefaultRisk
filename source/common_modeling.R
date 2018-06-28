@@ -10,10 +10,59 @@
 #' 
 #'
 #' @param dt 
+#' @param .groupByFields 
+#' @param .fillNAN 
+#' @param .trimTails 
+#'
+common.modeling.calcDescStats <- function(dt, .groupByFields, .trimTails = 0, .fillNAN = NA_real_) {
+  require(dplyr)
+  stopifnot(
+    is.data.frame(dt),
+    is.character(.groupByFields),
+    is.numeric(.trimTails),
+    is.numeric(.fillNAN)
+  )
+  
+  
+  dt.g <- dt %>% 
+    group_by_at(.groupByFields)
+  
+  dt.g %>% 
+    summarise(
+      N = n()
+    ) %>% 
+    inner_join(
+      dt.g %>% summarise_if(is.numeric, funs("min" = min(., na.rm = T))),
+      by = .groupByFields
+    ) %>% 
+    inner_join(
+      dt.g %>% summarise_if(is.double, funs("median" = median(., trim = .trimTails, na.rm = T))), # or mean for norm distribution
+      by = .groupByFields
+    ) %>% 
+    inner_join(
+      dt.g %>% summarise_if(is.double, funs("mad" = mad(., na.rm = T))),  # or SD for norm distribution
+      by = .groupByFields
+    ) %>% 
+    inner_join(
+      dt.g %>% summarise_if(is.numeric, funs("max" = max(., na.rm = T))),
+      by = .groupByFields
+    ) %>% 
+    mutate_if(
+      is.numeric,
+      funs(ifelse(is.nan(.) | is.infinite(.), .fillNAN, .))
+    ) %>%
+    ungroup()
+}
+
+
+
+#' 
+#'
+#' @param dt 
 #' @param .minSD 
 #' @param .minNotNA 
 #'
-common.modeling.getRedundantFields <- function(dt, .filterSD = .01, .filterMissedRatio = .01) {
+common.modeling.getRedundantCols <- function(dt, .filterSD = .01, .filterMissedRatio = .01) {
   require(dplyr)
   require(purrr)
   require(psych)
@@ -25,10 +74,12 @@ common.modeling.getRedundantFields <- function(dt, .filterSD = .01, .filterMisse
   )
   
   
-  describe(dt) %>% 
+  desc <- describe(dt) %>% 
     filter(sd <= .filterSD | n/nrow(dt) <= .filterMissedRatio) %>% 
     select(vars) %>% 
     as_vector
+  
+  names(dt)[desc]
 }
 
 
