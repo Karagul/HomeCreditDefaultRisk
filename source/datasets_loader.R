@@ -1,18 +1,43 @@
 
-source("previous_loan.R")
-source("bureau.R")
-source("installments_payment.R")
-source("credit_card_balance.R")
-source("pos_cash_balance.R")
+
+source("common_modeling.R")
 
 
-
-#' 
+#' Load loan applications
 #'
-#' 
-loader.bureau <- function() {
-  bureau.history <- bureau.load(job$Config) %>% bureau.getHistory # readRDS("cache/bureau.history.rds")
-  saveRDS(bureau.history, "cache/bureau.history.rds")
+loader.loans <- function(.config = job$Config) {
+  
+  source("loan.R")
+  
+  loans <- loan.load(.config)
+  
+  loan.metadata <- loan.getMetadata(loans$Train)
+  
+  loans %>% 
+    map(~ .x %>% 
+          loan.clear(., loan.metadata) %>% 
+          loan.format(., loan.metadata) %>% 
+          loan.calcRequestsNumber(., .fillNA = 0) %>% 
+          loan.calcDocumentNumber %>% 
+          loan.calcDefaultSocialCircleNumber(., .fillNA = 0) %>% 
+          loan.processingOwnership %>% 
+          loan.processingIncome %>% 
+          loan.processingExternalSourceScore %>% 
+          loan.processingDays %>% 
+          loan.missingValuesProcessing(., loan.metadata)
+    )
+}
+
+
+
+#' Load previous loans info from credit bureaus
+#'
+loader.bureau <- function(.config = job$Config) {
+  
+  source("bureau.R")
+  
+  bureau.history <- bureau.load(.config) %>% bureau.getHistory
+  # saveRDS(bureau.history, "cache/bureau.history.rds")
   
   bureau.history.stats <- bureau.getHistoryStats(bureau.history, .replaceNA = 0)
   stopifnot(
@@ -24,21 +49,22 @@ loader.bureau <- function() {
 
 
 
+#' Load previous loans application at bank
 #'
-#'
-#' 
-
-loader.prevLoans <- function() {
+loader.prevLoans <- function(.config = job$Config) {
   
-  prevLoans <- prevLoan.load(job$Config) %>% 
+  source("previous_loan.R")
+  
+  prevLoans <- prevLoan.load(.config) %>% 
     prevLoan.filter %>% 
     prevLoan.preprocessing
   
   prevLoans.history <- prevLoan.getHistory(prevLoans)
-  saveRDS(prevLoans.history, "cache/prevLoans.history.rds")
+  #saveRDS(prevLoans.history, "cache/prevLoans.history.rds")
   
   prevLoans.history.stats <- prevLoan.getHistoryStats(prevLoans.history, .replaceNA = 0)
   stopifnot(
+    nrow(prevLoans.history.stats) > 0, 
     !anyNA(prevLoans.history.stats)
   )
   
@@ -47,8 +73,121 @@ loader.prevLoans <- function() {
 
 
 
-#' 
+#' Load payment history for previous loans at bank
 #'
+loader.installments_payments_stats <- function(.config = job$Config, .calcStatsBy = c("SkIdPrev")) {
+  
+  source("installments_payment.R")
+  
+
+  dt <- installments_payment.load(.config)
+  
+  metadata <- installments_payment.getMetadata(dt)
+  
+  dt <- dt %>%
+    installments_payment.clean(., metadata) %>%
+    installments_payment.convert(., metadata)
+  
+  dt.stats <- common.modeling.calcDescStats(dt %>% 
+                                              mutate(
+                                                DaysInstalment_DaysEntryPayment_diff = DaysInstalment - DaysEntryPayment,
+                                                AmtInstalment_AmtPayment_diff = AmtInstalment - AmtPayment
+                                                ) %>% 
+                                              select(-SkIdCurr),
+                                            .calcStatsBy)
+  
+  glimpse(dt.stats)
+  
+  
+  dt.stats.w <- installments_payment.toWideTable(dt.stats, .fillNA = 0)%>% 
+    inner_join(
+      dt %>% distinct(SkIdPrev, SkIdCurr, .keep_all = F),
+      by = "SkIdPrev"
+    )
+  
+  describe(dt.stats.w)
+  
+  loader._flatternStats(dt.stats.w)
+}
+
+
+
+#' Load monthly data about previous credit cards clients have had with bank
+#' 
+loader.credit_card_balance_stats <- function(.config = job$Config, .calcStatsBy = c("SkIdPrev", "NameContractStatus")) {
+  
+  source("credit_card_balance.R")
+  
+  
+  dt <- credit_card_balance.load(.config)
+  
+  metadata <- credit_card_balance.getMetadata(dt)
+  
+  dt <- dt %>%
+    credit_card_balance.clean(., metadata) %>% 
+    credit_card_balance.convert(., metadata)
+  
+  
+  dt.stats <- common.modeling.calcDescStats(dt %>% select(-SkIdCurr), .calcStatsBy) %>% 
+    mutate(MonthsBalance_range = MonthsBalance_max - MonthsBalance_min)
+  
+  glimpse(dt.stats)
+  
+  
+  dt.stats.w <- credit_card_balance.toWideTable(dt.stats, .fillNA = 0) %>% 
+    inner_join(
+      dt %>% distinct(SkIdPrev, SkIdCurr, .keep_all = F),
+      by = "SkIdPrev"
+    )
+  
+  describe(dt.stats.w)
+  
+  
+  loader._flatternStats(dt.stats.w)
+}
+
+
+
+
+#' Load monthly data about previous point of sale or cash loans clients have had with bank
+#' 
+loader.pos_cash_balance_stats <- function(.config = job$Config, .calcStatsBy = c("SkIdPrev", "NameContractStatus")) {
+  
+  source("pos_cash_balance.R")
+  
+  
+  dt <- pos_cash_balance.load(.config)
+  
+  metadata <- pos_cash_balance.getMetadata(dt)
+  
+  dt <- dt %>% 
+    pos_cash_balance.clean(., metadata) %>% 
+    pos_cash_balance.convert(., metadata)
+  
+  dt.stats <- common.modeling.calcDescStats(dt %>% 
+                                              mutate(CntInstalment_CntInstalmentFuture_diff = CntInstalment - CntInstalmentFuture) %>% 
+                                              select(-SkIdCurr),
+                                            .calcStatsBy)
+  
+  glimpse(dt.stats)
+  
+  
+  
+  dt.stats.w <- pos_cash_balance.toWideTable(dt.stats, .fillNA = 0) %>% 
+    inner_join(
+      dt %>% distinct(SkIdPrev, SkIdCurr, .keep_all = F),
+      by = "SkIdPrev"
+    )
+  
+  describe(dt.stats.w)
+  
+  
+  loader._flatternStats(dt.stats.w)
+}
+
+
+
+#' Flattern statistics
 #' 
 loader._flatternStats <- function(dt) {
   dt.g <- dt %>% group_by(SkIdCurr)
@@ -86,115 +225,5 @@ loader._flatternStats <- function(dt) {
   )
   
   result
-  
 }
-
-
-
-#'
-#'
-#' 
-loader.installments_payments_stats <- function() {
-
-  installments_payments <- installments_payment.load(job$Config)
-  
-  installments_payments.metadata <- installments_payment.getMetadata(installments_payments)
-  
-  installments_payments <- installments_payments %>%
-    installments_payment.clean(., installments_payments.metadata) %>% 
-    installments_payment.convert(., installments_payments.metadata)
-  
-  installments_payments.stats <- common.modeling.calcDescStats(installments_payments %>% 
-                                                                 mutate(
-                                                                   DaysInstalment_DaysEntryPayment_diff = DaysInstalment - DaysEntryPayment,
-                                                                   AmtInstalment_AmtPayment_diff = AmtInstalment - AmtPayment
-                                                                 ) %>% 
-                                                                 select(-SkIdCurr),
-                                                               c("SkIdPrev"))
-  
-  glimpse(installments_payments.stats)
-  
-  
-  installments_payments.wstats <- installments_payment.toWideTable(installments_payments.stats, .fillNA = 0)%>% 
-    inner_join(
-      installments_payments %>% distinct(SkIdPrev, SkIdCurr, .keep_all = F),
-      by = "SkIdPrev"
-    )
-  
-  describe(installments_payments.wstats)
-  
-  loader._flatternStats(installments_payments.wstats)
-}
-
-
-
-#'
-#'
-#' 
-loader.credit_card_balance_stats <- function() {
-  
-  credit_card_balances <- credit_card_balance.load(job$Config)
-  
-  credit_card_balances.metadata <- credit_card_balance.getMetadata(credit_card_balances)
-  
-  credit_card_balances <- credit_card_balances %>%
-    credit_card_balance.clean(., credit_card_balances.metadata) %>% 
-    credit_card_balance.convert(., credit_card_balances.metadata)
-  
-  credit_card_balances.stats <- common.modeling.calcDescStats(credit_card_balances %>% 
-                                                                select(-SkIdCurr), 
-                                                              c("SkIdPrev", "NameContractStatus")) %>% 
-    mutate(
-      MonthsBalance_range = MonthsBalance_max - MonthsBalance_min
-    )
-  
-  glimpse(credit_card_balances.stats)
-  
-  credit_card_balances.wstats <- credit_card_balance.toWideTable(credit_card_balances.stats, .fillNA = 0) %>% 
-    inner_join(
-      credit_card_balances %>% distinct(SkIdPrev, SkIdCurr, .keep_all = F),
-      by = "SkIdPrev"
-    )
-  
-  describe(pos_cash_balances.wstats)
-  
-  
-  loader._flatternStats(credit_card_balances.wstats)
-}
-
-
-
-#'
-#'
-#' 
-loader.pos_cash_balance_stats <- function() {
-  pos_cash_balances <- pos_cash_balance.load(job$Config)
-  
-  pos_cash_balances.metadata <- pos_cash_balance.getMetadata(pos_cash_balances)
-  
-  pos_cash_balances <- pos_cash_balances %>% 
-    pos_cash_balance.clean(., pos_cash_balances.metadata) %>% 
-    pos_cash_balance.convert(., pos_cash_balances.metadata)
-  
-  pos_cash_balances.stats <- common.modeling.calcDescStats(pos_cash_balances %>% 
-                                                             mutate(CntInstalment_CntInstalmentFuture_diff = CntInstalment - CntInstalmentFuture) %>% 
-                                                             select(-SkIdCurr),
-                                                           c("SkIdPrev", "NameContractStatus"))
-  
-  glimpse(pos_cash_balances.stats)
-  
-  
-  
-  pos_cash_balances.wstats <- pos_cash_balance.toWideTable(pos_cash_balances.stats, .fillNA = 0) %>% 
-    inner_join(
-      pos_cash_balances %>% distinct(SkIdPrev, SkIdCurr, .keep_all = F),
-      by = "SkIdPrev"
-    )
-  
-  describe(pos_cash_balances.wstats)
-  
-  
-  loader._flatternStats(pos_cash_balances.wstats)
-}
-
 

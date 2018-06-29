@@ -1,7 +1,7 @@
 
 
 #'
-#'
+#' Previous loans info from credit bureaus
 #'
 
 

@@ -1,7 +1,7 @@
 
 
 #'
-#'
+#' Payment history for previous loans at bank
 #'
 
 
@@ -115,7 +115,7 @@ installments_payment.toWideTable <- function(dt, .groupByFields = "SkIdPrev", .p
     is.double(.fillNA)
   )
   
-  names(dt) <- paste(.prefix , names(dt), sep = "__")
+  names(dt) <- c("SkIdPrev", paste(.prefix , names(dt)[-1], sep = "__"))
   
   
   # remove redundant cols

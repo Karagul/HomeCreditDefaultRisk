@@ -1,7 +1,7 @@
 
 
 #'
-#'
+#' Monthly data about previous point of sale or cash loans clients have had with bank
 #'
 
 

@@ -1,7 +1,7 @@
 
 
 #'
-#'
+#' Monthly data about previous credit cards clients have had with bank
 #'
 
 
@@ -152,7 +152,5 @@ credit_card_balance.toWideTable <- function(dt, .groupByFields = c("SkIdPrev", "
       funs(replace_na(., .fillNA))
     )
 }
-
-
 
 

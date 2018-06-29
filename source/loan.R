@@ -1,7 +1,7 @@
 
 
 #'
-#'
+#' Loan applications
 #'
 
 
@@ -216,12 +216,12 @@ loan.calcStatsBy <- function(dt, .fieldPattern) {
 #'
 #' @param dt 
 #'
-loan.calcRequestsNumber <- function(dt, .replaceNA = NA_real_) {
-  stopifnot(is.numeric(.replaceNA))
+loan.calcRequestsNumber <- function(dt, .fillNA = NA_real_) {
+  stopifnot(is.numeric(.fillNA))
   
   dt %>% 
     loan.calcStatsBy(., "AmtReq") %>% 
-    mutate(AmtReq_count = replace_na(AmtReq_count, .replaceNA))
+    mutate(AmtReq_count = replace_na(AmtReq_count, .fillNA))
 }
 
 
@@ -241,12 +241,12 @@ loan.calcDocumentNumber <- function(dt) {
 #'
 #' @param dt 
 #'
-loan.calcDefaultSocialCircleNumber <- function(dt, .replaceNA = NA_real_) {
-  stopifnot(is.numeric(.replaceNA))
+loan.calcDefaultSocialCircleNumber <- function(dt, .fillNA = NA_real_) {
+  stopifnot(is.numeric(.fillNA))
   
   dt %>% 
     loan.calcStatsBy(., "CntSocialCircle") %>% 
-    mutate(CntSocialCircle_count = replace_na(CntSocialCircle_count, .replaceNA))
+    mutate(CntSocialCircle_count = replace_na(CntSocialCircle_count, .fillNA))
 }
 
 
