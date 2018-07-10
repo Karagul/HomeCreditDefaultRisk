@@ -39,3 +39,4 @@ rsconnect/
 # input and output data
 /data/*.csv*
 /source/output/
+/source/temp/
