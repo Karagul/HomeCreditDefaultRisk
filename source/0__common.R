@@ -19,7 +19,7 @@ options(stringsAsFactors = F)
 #' @return Job
 job.startup <- function(jobName, 
                         mode = "release", 
-                        packages = c("dplyr", "tidyr", "purrr", "doParallel", "foreach")) {
+                        packages = c("dplyr", "tidyr", "purrr", "doParallel", "foreach", "data.table")) {
   stopifnot(
     is.character(jobName) | is.null(jobName),
     is.character(mode),

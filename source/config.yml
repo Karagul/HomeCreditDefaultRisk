@@ -2,6 +2,7 @@ default:
   LogDir: "logs"
   DataDir: "../data"
   OutputDir: "output"
+  CacheDir: "cache"
 
 debug:
   DegreeOfParallelism: 2
