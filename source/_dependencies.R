@@ -13,7 +13,7 @@ local({
                 "ggplot2", # vizualization
                 "zoo", "xts", "Quandl", # time-series
                 "foreach", "doParallel", # parallel computing
-                "PRROC", "e1071", "caret" # ML algos
+                "PRROC", "caret" # ML algos
   )
   
   # install packages

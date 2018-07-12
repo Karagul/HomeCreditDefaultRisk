@@ -5,189 +5,127 @@
 #'
 
 
+# Import dependencies
+source("common_fe.R")
+
+
 #'
 #'
 #' @param .config 
 #' 
-bureau.load <- function(.config, .replaceNA = 0) {
-  require(dplyr)
-  require(stringr)
-  stopifnot(
-    is.list(.config),
-    is.numeric(.replaceNA)
-  )
-
-  # calculte balances stats 
-  calcBalancesStats <- function() {
-    require(tidyr)
-    
-    bureauBalances.grouped <- fread.csv.zipped("bureau_balance.csv", .config$DataDir) %>% 
-      group_by(SkIdBureau, Status) %>% 
-      summarise(
-        N = log(n()),
-        Min = min(MonthsBalance),
-        Median = median(MonthsBalance),
-        Max = max(MonthsBalance)
-      )
-    
-    bureauBalances.grouped %>% select(-Min, -Max, -Median) %>% spread(Status, N, sep = "_N_", fill = .replaceNA) %>% 
-      inner_join(
-        bureauBalances.grouped %>% select(-Min, -N, -Median) %>% spread(Status, Max, sep = "_max_", fill = .replaceNA),
-        by = "SkIdBureau") %>% 
-      inner_join(
-        bureauBalances.grouped %>% select(-Max, -N, -Median) %>% spread(Status, Min, sep = "_min_", fill = .replaceNA),
-        by = "SkIdBureau") %>% 
-      inner_join(
-        bureauBalances.grouped %>% select(-Min, -Max, -N) %>% spread(Status, Median, sep = "_median_", fill = .replaceNA),
-        by = "SkIdBureau")
-  }
-  
-  
-  fread.csv.zipped("bureau.csv", .config$DataDir) %>% 
+bureau._load <- function(.config, .fillNA) {
+  burea <- fread.csv.zipped("bureau.csv", .config$DataDir) %>% 
     mutate_if(
       is.character,
       funs(if_else(!is.na(.), str_replace_all(str_to_lower(.), "\\W", "_"), NA_character_))
     ) %>% 
     mutate(
-      CreditCurrency = if_else(CreditCurrency == "currency_1", 0L, 1L),
-      DaysCredit = abs(DaysCredit)
+      CreditCurrency = if_else(CreditCurrency == "currency_1", 0L, 1L)
     ) %>% 
     filter(
       CreditActive %in% c("closed", "active")
-    ) # %>% 
-    # left_join(
-    #   calcBalancesStats(), by = "SkIdBureau"
-    # )
+    )
 }
 
 
 
-#' 
+#' Get Bureau Balances stats
 #'
-#' @param dt 
-#'
-bureau.getHistory <- function(dt) {
-  require(dplyr)
-  stopifnot(
-    is.data.frame(dt)
-  )
-  
-  
-  groupByFields <- c("SkIdCurr", "CreditType", "CreditActive")
-  
-  dt.g <- dt %>% 
-    transmute(
-      # group by fields
-      SkIdCurr, CreditType, CreditActive,
-      # calc stats for fields
-      CreditCurrency,
-      DaysCredit,
-      CreditDayUnderdue = DaysCreditEnddate - DaysEnddateFact,
-      DaysCreditEnddate = abs(DaysCreditEnddate),
-      CreditDayOverdue,
-      CntCreditProlong,
-      AmtCreditSum,
-      AmtCreditSumDebt,
-      AmtCreditSumLimit,
-      AmtCreditSumOverdue,
-      DaysCreditUpdate,
-      AmtAnnuity
-    ) %>% 
-    group_by_at(
-      groupByFields
-    )
-  
-  
-  dt.g %>% 
-    summarise(
-      N = n(),
-      CreditCurrencyRisk = sum(CreditCurrency, na.rm = T)
-    ) %>% 
-    inner_join(
-      dt.g %>% summarise_if(is.numeric, funs("min" = min(., na.rm = T))),
-      by = groupByFields
-    )  %>% 
-    inner_join(
-      dt.g %>% summarise_if(is.numeric, funs("median" = median(., na.rm = T))),
-      by = groupByFields
-    ) %>% 
-    inner_join(
-      dt.g %>% summarise_if(is.numeric, funs("max" = max(., na.rm = T))),
-      by = groupByFields
-    ) %>% 
-    inner_join(
-      dt.g %>% summarise_if(is.numeric, funs("sum" = sum(., na.rm = T))),
-      by = groupByFields
-    ) %>% 
-    inner_join(
-      dt.g %>% summarise_if(is.numeric, funs("mad" = mad(., na.rm = T))),
-      by = groupByFields
-    ) %>% 
-    mutate_if(
-      is.numeric, 
-      funs(if_else(is.nan(.) | is.infinite(.), NA_real_, as.numeric(.)))
-    ) %>% 
-    ungroup() %>% 
+bureau._getBalancesStats <- function(.config, .fillNA, .minSD, .minNA) {
+  fread.csv.zipped("bureau_balance.csv", .config$DataDir) %>% 
+    common.fe.calcStatsByGroups(.,
+                                "SkIdBureau", list(".", "Status"), "MonthsBalance",
+                                .fillNA, .drop = T) %>%
     select(
-      -starts_with("CreditCurrency_")
+      -matches("_(first|last)")
+    ) %>% 
+    select(
+      -one_of(common.fe.findRedundantCols(., .minSD, .minNA))
     )
 }
 
 
 
-
 #' 
-#'
-#' @param dt 
+#' @param .config 
 #' @param .minObservationNumber 
+#' @param .fillNA 
+#' @param .minNA 
 #' @param .minSD 
-#' @param .minNotNA 
-#'
-bureau.getHistoryStats <- function(dt, .minObservationNumber = 100, .minSD = .01, .minNotNA = .01, .replaceNA = NA_real_) {
+#' 
+bureau.getHistoryStats <- function(.config, 
+                                   .fillNA = NA_real_,
+                                   .minObservationNumber = 100, 
+                                   .minSD = .01, .minNA = .1) {
   require(dplyr)
   require(data.table)
   require(purrr)
   require(psych)
+  require(stringr)
   
   stopifnot(
-    is.data.frame(dt),
+    is.list(.config),
+    is.numeric(.fillNA),
     is.numeric(.minObservationNumber),
     is.numeric(.minSD),
-    is.numeric(.minNotNA), 
-    is.numeric(.replaceNA)
+    is.numeric(.minNA)
   )
   
   
-  groupByFields <- c("SkIdCurr", "CreditType", "CreditActive")
+  keyField <- "SkIdCurr"
   
-  dt <- dt %>% 
-    group_by(CreditType, CreditActive) %>% 
-    filter(n() >= .minObservationNumber) %>% 
+  ## 1
+  dt <- bureau._load(.config, .fillNA) %>% 
+    # add features
+    mutate(
+      CreditDayUnderdue = DaysCreditEnddate - DaysEnddateFact
+    ) %>% 
+    # filter rare cases
+    group_by(
+      CreditType, CreditActive, CreditCurrency
+    ) %>% 
+    filter(
+      n() >= .minObservationNumber
+    ) %>% 
     ungroup() %>% 
-    as.data.table(., key = groupByFields)
+    # join w/ stats
+    left_join(
+      bureau._getBalancesStats(.config, .fillNA, .minSD, .minNA),
+      by = "SkIdBureau"
+    ) %>% 
+    # order by days before current application did client apply for Credit Bureau credit
+    arrange(DaysCredit)
   
-  dt <- melt(dt, id.var = groupByFields, variable.name = "Metrics")
-  dt <- dt[, Metrics := paste("bureau", CreditType, CreditActive, Metrics, sep = "__")]
   
-  dt <- dcast.data.table(dt, SkIdCurr ~ Metrics, value.var = "value")
-  
-  
-  dt.desc <- describe(dt %>%
-                        mutate_if(
-                          is.numeric, funs(if_else(is.nan(.) | is.infinite(.), NA_real_, as.numeric(.)))
-                        ))
-  
-  redundantFieldsIndex <- dt.desc %>% 
-    filter(sd < .minSD | n/nrow(dt) < .minNotNA) %>% 
-    select(vars) %>% 
-    as_vector
+  ## 2
+  values <- setdiff(names(dt %>% select_if(is.numeric)),
+                    c(keyField,"SkIdBureau", "CreditType", "CreditActive", "CreditCurrency"))
   
   dt %>% 
-    select(-one_of(names(dt)[redundantFieldsIndex])) %>% 
+    common.fe.calcStatsByGroups(.,
+                                keyField, 
+                                list(".", "CreditType", "CreditActive", c("CreditType", "CreditActive", "CreditCurrency")),
+                                values,
+                                .fillNA = NA_real_, .drop = T) %>% 
+    # remove redundant fields by mask
+    select(
+      -matches("_min_([[:alnum:]]_)?max"),
+      -matches("_max_([[:alnum:]]_)?min"),
+      -matches("_length_([[:alnum:]]_)+length"),
+      -matches("_(min|median|max)_([[:alnum:]]_)?length"),
+      -matches("_first")
+    ) %>% 
+    # remove redundant fields by stats
+    select(
+      -one_of(common.fe.findRedundantCols(., .minSD, .minNA))
+    ) %>% 
+    select(
+      -one_of(common.fe.findCorrelatedCols(., .threshold = .9, .fillNA = 0, .extraFields = keyField))
+    ) %>% 
+    # fill NAs if nessesary
     mutate_if(
       is_double,
-      funs(replace_na(., .replaceNA))
+      funs(replace_na(., .fillNA))
     )
 }
-
 

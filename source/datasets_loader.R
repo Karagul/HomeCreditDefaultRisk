@@ -1,5 +1,10 @@
 
 
+#'
+#' Datasets laoders
+#'
+
+source("common_fe.R")
 source("common_modeling.R")
 
 
@@ -36,15 +41,7 @@ loader.bureau <- function(.config = job$Config) {
   
   source("bureau.R")
   
-  bureau.history <- bureau.load(.config) %>% bureau.getHistory
-  # saveRDS(bureau.history, "cache/bureau.history.rds")
-  
-  bureau.history.stats <- bureau.getHistoryStats(bureau.history, .replaceNA = 0)
-  stopifnot(
-    !anyNA(bureau.history.stats)
-  )
-  
-  bureau.history.stats
+  bureau.getHistoryStats(.config)
 }
 
 
@@ -59,7 +56,7 @@ loader.prevLoans <- function(.config = job$Config) {
     prevLoan.filter %>% 
     prevLoan.preprocessing
   
-  prevLoans.history <- prevLoan.getHistory(prevLoans)
+  prevLoans.history <- readRDS("cache/prevLoans.history.rds") # prevLoan.getHistory(prevLoans)
   #saveRDS(prevLoans.history, "cache/prevLoans.history.rds")
   
   prevLoans.history.stats <- prevLoan.getHistoryStats(prevLoans.history, .replaceNA = 0)

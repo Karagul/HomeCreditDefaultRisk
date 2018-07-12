@@ -171,8 +171,8 @@ local({
   
   
   
-  ## common.fe.getRedundantCols naive test
-  x %>% select(one_of(common.fe.getRedundantCols(x)))
+  ## common.fe.findRedundantCols naive test
+  x %>% select(one_of(common.fe.findRedundantCols(x)))
   
   
   
@@ -248,13 +248,13 @@ local({
     ) %>% 
     mutate(
       V2 = -V1, # cor(V1, V2) == -1
-      V3 = rnorm(sampleSize, 0, 1) + V1, # cor(V1, V2) ~ .9
+      V3 = rnorm(sampleSize, 0, 10) + V1, # cor(V1, V2) ~ .9
       V4 = runif(sampleSize, 1L, 100L)
     )
   
   stopifnot(
     nrow(dt) > 0,
     ncol(dt %>% select_if(is.numeric)) > 0,
-    common.fe.findCorrelatedCols(dt, .threshold = .5, .extraFields = "Id") == c("V1", "V2")
+    common.fe.findCorrelatedCols(dt, .threshold = .8, .extraFields = "Id") == c("V1", "V2")
   )
 })
