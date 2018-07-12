@@ -1,4 +1,10 @@
 
+
+#'
+#' Install required libraries
+#'
+
+
 local({
   # packages list
   packages <- c("odbc", "data.table", "dplyr", "purrr", "tidyr", # data transform
@@ -7,12 +13,11 @@ local({
                 "ggplot2", # vizualization
                 "zoo", "xts", "Quandl", # time-series
                 "foreach", "doParallel", # parallel computing
-                "PRROC" #"e1071" , "randomForest", "caret" # ML algo
+                "PRROC", "e1071", "caret" # ML algos
   )
   
   # install packages
   packages.install("lubridate", "https://cran.r-project.org/")
   packages.install(packages) 
 })
-
 
