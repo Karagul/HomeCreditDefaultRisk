@@ -96,7 +96,7 @@ common.fe.calcStatsByGroups <- function(dt,
     ) %>% 
     bind_cols %>% 
     select(
-      -matches(sprintf("^(%s){1}\\d+$", .idField))
+      -matches(sprintf("^(%s){1}\\d+$", .idField)) # remove duplicates key fields
     )
 }
 
@@ -258,3 +258,4 @@ local({
     common.fe.findCorrelatedCols(dt, .threshold = .8, .extraFields = "Id") == c("V1", "V2")
   )
 })
+

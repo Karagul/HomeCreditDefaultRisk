@@ -102,7 +102,10 @@ encodingFeatures <- function(.datasets, .metadata) {
   factorOHE.pattern <- sprintf("^(%s)+_", paste(.metadata$Features$FactorOHE, collapse = "|"))
   .datasets <- .datasets %>% 
     map(
-      ~ .x %>% mutate_at(vars(matches(factorOHE.pattern)), funs(ifelse(!is.na(.), ., 0)))
+      ~ .x %>% 
+        mutate_at(
+          vars(matches(factorOHE.pattern)), 
+          funs(ifelse(!is.na(.), ., 0)))
     )
   
   stopifnot(
@@ -118,7 +121,9 @@ encodingFeatures <- function(.datasets, .metadata) {
           } else {
             .datasets %>% 
               map_lgl(
-                function(..x) nrow(..x %>% select(matches(.y)) %>% filter_all(any_vars(is.na(.)))) == 0
+                function(..x) nrow(..x %>% 
+                                     select(matches(.y)) %>% 
+                                     filter_all(any_vars(is.na(.)))) == 0
               )
           }
         ) %>% 
@@ -145,7 +150,9 @@ replaceMissingValues <- function(.datasets, .metadata) {
   
   
   fieldNames <- names(.datasets$Train %>% 
-                        select(ends_with("Avg"), ends_with("Mode"), ends_with("Medi")))
+                        select(matches("(Avg|Mode|Medi)$")))
+  
+  write(sprintf("Replace missing values for: %s", paste(fieldNames, collapse = ", ")), stdout())
   
   apartments.stats <- fieldNames %>% 
     map(
@@ -176,8 +183,5 @@ replaceMissingValues <- function(.datasets, .metadata) {
   #       funs(replace_na(., 0))
   #     )
   # )
-  
-  # colSums(is.na(datasets$Test))
 }
-
 

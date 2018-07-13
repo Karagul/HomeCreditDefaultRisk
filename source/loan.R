@@ -18,7 +18,7 @@ loan.getMetadata <- function(dt) {
   label <- "Label"
   
   # features info
-  # set all Logic, FactorSLE, FactorOHE, ExtraVars vars explicitly
+  # note: set all Logic, FactorSLE, FactorOHE, ExtraVars vars explicitly
   f <- list(
     Numeric = c(),
     Logic = c("EmergencystateMode", "CodeGender",
@@ -45,14 +45,17 @@ loan.getMetadata <- function(dt) {
     sprintf("Ignored fields: %s", paste(f$Redundant, collapse = ", ")), stdout()
   )
   
+  
   stopifnot(
     !anyDuplicated(c(f$Numeric, f$Logic, f$FactorSLE, f$FactorOHE, f$ExtraVars, f$Redundant, label)),
-    ncol(dt) == length(c(f$Numeric, f$Logic, f$FactorSLE, f$FactorOHE, f$ExtraVars, f$Redundant, label))
+    ncol(dt) == length(c(f$Numeric, f$Logic, f$FactorSLE, f$FactorOHE, f$ExtraVars, f$Redundant, label)) |
+    ncol(dt) == length(c(f$Numeric, f$Logic, f$FactorSLE, f$FactorOHE, f$ExtraVars, label))
   )
   
   
   # return result
   list(
+    Key = "SkIdCurr",
     Features = f,
     Labels = label
   )
@@ -170,7 +173,9 @@ loan.format <- function(dt, .metadata) {
     # format factor features
     mutate_if(
       is.character,
-      funs(if_else(!is.na(.), str_replace_all(str_to_lower(.), "\\W", "_"), NA_character_))
+      funs(if_else(!is.na(.),
+                   str_replace_all(str_to_lower(.), "\\W", "_"),
+                   NA_character_))
     )
 }
 
@@ -291,10 +296,10 @@ loan.processingIncome <- function(dt) {
       
       CreditDuration = AmtCredit/AmtAnnuity,
       CreditPercent = (AmtCredit - AmtGoodsPrice) / AmtCredit / CreditDuration * 12
-    ) # %>% 
-    # mutate_at(
-    #   vars(starts_with("IncomePer")), funs(log(. + 1))
-    # )
+    ) %>% 
+    mutate_at(
+      vars(starts_with("IncomePer")), funs(log(. + 1))
+    )
 }
 
 
