@@ -70,7 +70,7 @@ encodingFeatures <- function(.datasets, .metadata) {
   encoders.OH <- .metadata$Features$FactorOHE %>% 
     map(~ common.modeling.getOneHotEncoder(.x, .datasets$Train))
   
-  .metadata$Features$FactorSLE <- c(.metadata$Features$FactorSLE, c("ExtSource_weight", "EmergencystateMode"))
+  .metadata$Features$FactorSLE <- c(.metadata$Features$FactorSLE, c("EmergencystateMode"))
   
   encoders.SLE <- .metadata$Features$FactorSLE %>% 
     map(~ common.modeling.smoothedLikelihoodEncoding(.x, .datasets$Train))

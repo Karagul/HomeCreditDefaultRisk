@@ -28,7 +28,7 @@ loader.loans <- function(.config = job$Config) {
           loan.processingIncome %>% 
           loan.processingExternalSourceScore %>% 
           loan.processingDays %>% 
-          loan.missingValuesProcessing(., loan.metadata)
+          loan.missingValuesProcessing(., loan.metadata, .fillNA = -1L)
     )
 }
 
@@ -40,7 +40,12 @@ loader.bureau <- function(.config = job$Config) {
   
   source("bureau.R")
   
-  bureau.getHistoryStats(.config)
+  dt <- bureau.getHistoryStats(.config)
+  
+  names(dt)[-1] <- paste0("bureau__", names(dt)[-1])
+  
+  
+  dt
 }
 
 
@@ -51,20 +56,15 @@ loader.prevLoans <- function(.config = job$Config) {
   
   source("previous_loan.R")
   
-  prevLoans <- prevLoan.load(.config) %>% 
+  dt <- prevLoan.load(.config) %>% 
     prevLoan.filter %>% 
-    prevLoan.preprocessing
+    prevLoan.preprocessing %>% 
+    prevLoan.getHistoryStats
   
-  prevLoans.history <- readRDS("cache/prevLoans.history.rds") # prevLoan.getHistory(prevLoans)
-  #saveRDS(prevLoans.history, "cache/prevLoans.history.rds")
+  names(dt)[-1] <- paste0("prevLoans__", names(dt)[-1])
   
-  prevLoans.history.stats <- prevLoan.getHistoryStats(prevLoans.history, .replaceNA = 0)
-  stopifnot(
-    nrow(prevLoans.history.stats) > 0, 
-    !anyNA(prevLoans.history.stats)
-  )
   
-  prevLoans.history.stats
+  dt
 }
 
 

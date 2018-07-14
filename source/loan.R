@@ -312,41 +312,39 @@ loan.processingIncome <- function(dt) {
 loan.processingExternalSourceScore <- function(dt) {
   stopifnot(is.data.frame(dt))
   require(dplyr)
+
+  extSources <- as.matrix(dt %>% select(starts_with("ExtSource")))
+  
+  
+  dt$ExtSource_mean <- apply(extSources, 1, mean, na.rm = T)
+  # note: decrease model perfomance
+  # dt$ExtSource_min <- apply(extSources, 1, min, na.rm = T)
+  # dt$ExtSource_median <- apply(extSources, 1, median, na.rm = T)
+  # dt$ExtSource_max <- apply(extSources, 1, max, na.rm = T)
+  # dt$ExtSource_sd <- apply(extSources, 1, sd, na.rm = T)
+  # dt$ExtSource_mad <- apply(extSources, 1, mad, na.rm = T)
+  
   
   dt %>% 
     mutate(
       ExtSource1_w = if_else(!is.na(ExtSource1), 1L, 0L),
       ExtSource2_w = if_else(!is.na(ExtSource2), 4L, 0L),
       ExtSource3_w = if_else(!is.na(ExtSource3), 2L, 0L),
-      ExtSource_weight = ExtSource1_w + ExtSource2_w + ExtSource3_w,
-      ExtSource_mean = if_else(ExtSource_weight == 7,
-                              (ExtSource1 + ExtSource2 + ExtSource3)/3,
-                              if_else(ExtSource_weight == 6,
-                                      (ExtSource2 + ExtSource3)/2,
-                                      if_else(ExtSource_weight == 5,
-                                              (ExtSource1 + ExtSource2)/2,
-                                              if_else(ExtSource_weight == 3,
-                                                      (ExtSource1 + ExtSource3)/2,
-                                                      if_else(ExtSource_weight == 4,
-                                                              ExtSource2,
-                                                              if_else(ExtSource_weight == 2,
-                                                                      ExtSource3,
-                                                                      if_else(ExtSource_weight == 1,
-                                                                              ExtSource1,
-                                                                              NA_real_))))))),
-      ExtSource1_2_diff = ExtSource1 - ExtSource2,
-      ExtSource2_3_diff = ExtSource2 - ExtSource3,
-      ExtSource3_1_diff = ExtSource3 - ExtSource1
-    ) %>% 
-    mutate_at(
-      c(paste0("ExtSource", c(1:3))), 
-      funs("ExtSourceMean_diff" = . - ExtSource_mean)
+      ExtSource_weight = ExtSource1_w + ExtSource2_w + ExtSource3_w
     ) %>% 
     select(
       -ExtSource1_w, -ExtSource2_w, -ExtSource3_w
-    )
-  
-  # TODO: replace NAs to mean
+    ) #%>% 
+    # note: decrease model perfomance
+    # mutate(
+    #   ExtSource1_2_diff = ExtSource1 - ExtSource2,
+    #   ExtSource2_3_diff = ExtSource2 - ExtSource3,
+    #   ExtSource3_1_diff = ExtSource3 - ExtSource1
+    # )
+    # mutate_at(
+    #   c(paste0("ExtSource", c(1:3))),
+    #   funs("_mean_diff" = . - ExtSource_mean)
+    # )
 }
 
 
@@ -372,7 +370,7 @@ loan.processingDays <- function(dt) {
     mutate_at(
       features,
       funs("years" = . %/% 365.25)
-    ) %>% 
+    ) %>%
     mutate_at(
       features,
       funs("DaysBirth_ratio" = ./DaysBirth)
@@ -386,33 +384,15 @@ loan.processingDays <- function(dt) {
       OwnCarAge_DaysBirth_ratio = OwnCarAge/DaysBirth_years,
       OwnCarAge_DaysEmployed_ratio = OwnCarAge/(DaysEmployed_years + 1)
     ) %>% 
-    # # normalization
-    # mutate_at(
-    #   vars(one_of(c("DaysEmployed_years", "DaysRegistration_years", "DaysIdPublish_years", "DaysLastPhoneChange_years"))),
-    #   funs(log(. + 1))
-    # )  %>% 
+    # normalization
+    mutate_at(
+      vars(one_of(c("DaysEmployed_years", "DaysRegistration_years", "DaysIdPublish_years", "DaysLastPhoneChange_years"))),
+      funs(log(. + 1))
+    )  %>%
     # remove redundant
     select(
-      #-DaysEmployed, -DaysRegistration, -DaysIdPublish, -DaysLastPhoneChange, -DaysBirth,
       -DaysBirth_DaysBirth_ratio, -DaysEmployed_DaysEmployed_ratio, -DaysBirth_DaysEmployed_ratio
     )
-  
-    # TODO: replace NAs
-    # inner_join(.train %>%
-    #              transmute(DaysEmployed, DaysBirth, ClientAge = abs(DaysBirth %/% 365.25)) %>% 
-    #              group_by(ClientAge) %>% 
-    #              summarise(
-    #                WorkExprience_min = min(DaysEmployed/DaysBirth, na.rm = T),
-    #                WorkExprience_median = median(DaysEmployed/DaysBirth, na.rm = T)
-    #              ),
-    #            by = "ClientAge") %>% 
-    # mutate(
-    #   WorkingRatePessimistic = if_else(!is.na(WorkingRate), WorkingRate, WorkExprience_min),
-    #   WorkingRateOptimistic = if_else(!is.na(WorkingRate), WorkingRate, WorkExprience_median)
-    # ) %>% 
-    # select(
-    #   -WorkingRate, -WorkExprience_min, -WorkExprience_median
-    # )
 }
 
 
@@ -421,23 +401,24 @@ loan.processingDays <- function(dt) {
 #'
 #' @param dt 
 #' @param .metadata 
+#' @param .fillNA 
 #' 
-loan.missingValuesProcessing <- function(dt, .metadata) {
+loan.missingValuesProcessing <- function(dt, .metadata, .fillNA = NA) {
   require(dplyr)
   stopifnot(
     is.data.frame(dt),
     is.list(.metadata)
   )
   
-  
   dt %>%
     mutate(
-      EmergencystateMode = replace_na(EmergencystateMode, -1L),
+      EmergencystateMode = replace_na(EmergencystateMode, .fillNA),
       HousetypeMode = replace_na(HousetypeMode,  "block_of_flats"),
       FondkapremontMode = replace_na(FondkapremontMode, "reg_oper_account")
     ) %>% 
     mutate_if(
       is.character,
-      funs(replace_na(., as.character(-1)))
+      funs(replace_na(., as.character(.fillNA)))
     )
 }
+

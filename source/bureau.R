@@ -99,7 +99,7 @@ bureau.getHistoryStats <- function(.config,
   
   ## 2
   values <- setdiff(names(dt %>% select_if(is.numeric)),
-                    c(keyField,"SkIdBureau", "CreditType", "CreditActive", "CreditCurrency"))
+                    c(keyField, "SkIdBureau", "CreditType", "CreditActive", "CreditCurrency"))
   
   dt %>% 
     common.fe.calcStatsByGroups(.,

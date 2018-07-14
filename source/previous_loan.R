@@ -5,6 +5,10 @@
 #'
 
 
+# Import dependencies
+source("common_fe.R")
+
+
 #' 
 #'
 #' @param .config 
@@ -81,90 +85,78 @@ prevLoan.preprocessing <- function(dt) {
 #'
 #' @param dt 
 #'
-prevLoan.getHistory <- function(dt) {
+prevLoan.getHistoryStats <- function(dt, 
+                                     .fillNA = NA_real_,
+                                     .minObservationNumber = 100, 
+                                     .minSD = .01, .minNA = .1) {
   require(dplyr)
+  require(tidyr)
+  require(purrr)
+  
   stopifnot(
-    is.data.frame(dt)
+    is.data.frame(dt),
+    is.numeric(.fillNA),
+    is.numeric(.minObservationNumber),
+    is.numeric(.minSD),
+    is.numeric(.minNA)
   )
   
+  keyField <- "SkIdCurr"
   
-  groupByFields <- c("SkIdCurr", "NameContractType", "NameContractStatus")
   
-  dt.g <- dt %>% 
-    select(
-      # group by fields
-      one_of(groupByFields),
-      # calc stats for fields
-      starts_with("Amt"), starts_with("Rate"), starts_with("Days")
-    ) %>% 
+  ## 1
+  dt <- dt %>%
+    # add features
     mutate(
       CreditDuration = AmtCredit/AmtAnnuity,
       CreditPercent = (AmtCredit - AmtGoodsPrice) / AmtCredit / CreditDuration * 12,
       AmtApplication_AmtCredit_ratio = AmtCredit/AmtApplication,
-      AmtDownPayment_AmtAnnuity_ratio = AmtDownPayment/AmtCredit,
-      
-      
-      RateDownPayment_w = if_else(!is.na(RateDownPayment), 1L, 0L),
-      RateInterestPrivileged_w = if_else(!is.na(RateInterestPrivileged), 4L, 0L),
-      RateInterestPrimary_w = if_else(!is.na(RateInterestPrimary), 2L, 0L),
-      
-      RateInterest_w = RateDownPayment_w + RateInterestPrivileged_w + RateInterestPrimary_w,
-      RateInterest_mean = if_else(RateInterest_w == 7,
-                                  (RateDownPayment + RateInterestPrivileged +  RateInterestPrimary)/3,
-                                  if_else(RateInterest_w == 6,
-                                          (RateInterestPrivileged + RateInterestPrimary)/2,
-                                          if_else(RateInterest_w == 5,
-                                                  (RateDownPayment + RateInterestPrivileged)/2,
-                                                  if_else(RateInterest_w == 3,
-                                                          (RateDownPayment + RateInterestPrimary)/2,
-                                                          if_else(RateInterest_w == 4,
-                                                                  RateInterestPrivileged,
-                                                                  if_else(RateInterest_w == 2,
-                                                                          RateInterestPrimary,
-                                                                          if_else(RateInterest_w == 1,
-                                                                                  RateDownPayment,
-                                                                                  NA_real_)))))))
+      AmtDownPayment_AmtAnnuity_ratio = AmtDownPayment/AmtCredit
+    ) %>% 
+    # fill missing categorical features
+    mutate_at(
+      vars(starts_with("Name")),
+      funs(if_else(!is.na(.), ., "-1"))
+    ) %>% 
+    # filter rare cases
+    group_by(
+      NameContractType, NameContractStatus
+    ) %>% 
+    filter(
+      n() >= .minObservationNumber
+    ) %>% 
+    ungroup() %>% 
+    # order by decision about previous application made
+    arrange(DaysDecision)
+  
+  
+  ## 2
+  values <- setdiff(names(dt %>% select_if(is.numeric)),
+                    c(keyField, "SkIdPrev"))
+  
+  dt %>% 
+    common.fe.calcStatsByGroups(.,
+                                keyField, 
+                                list(".", "NameContractType", "NameContractStatus", "NameProductType", "NamePortfolio", "NameClientType", "ProductCombination"),
+                                values,
+                                .fillNA = NA_real_, .drop = T)  %>% 
+    # remove redundant fields by mask
+    # select(
+    #   -matches("_min_([[:alnum:]]_)?max"),
+    # ) %>% 
+    # remove redundant fields by stats
+    select(
+      -one_of(common.fe.findRedundantCols(., .minSD, .minNA))
     ) %>% 
     select(
-      -AmtApplication, -AmtDownPayment, -AmtGoodsPrice,
-      -RateDownPayment_w, -RateInterestPrivileged_w, -RateInterestPrimary_w, -RateInterestPrivileged, - RateInterestPrimary,
-      -DaysDecision, -DaysFirstDrawing
+      -one_of(common.fe.findCorrelatedCols(., .threshold = .9, .fillNA = 0, .extraFields = keyField))
     ) %>% 
-    group_by_at(groupByFields)
-  
-  
-  
-  dt.g %>% 
-    summarise(
-      N = n()
-    ) %>% 
-    inner_join(
-      dt.g %>% summarise_if(is.numeric, funs("min" = min(., na.rm = T))),
-      by = groupByFields
-    )  %>% 
-    inner_join(
-      dt.g %>% summarise_if(is.numeric, funs("median" = median(., na.rm = T))),
-      by = groupByFields
-    ) %>% 
-    inner_join(
-      dt.g %>% summarise_if(is.numeric, funs("max" = max(., na.rm = T))),
-      by = groupByFields
-    ) %>% 
-    # inner_join(
-    #   dt.g %>% summarise_if(is.numeric, funs("sum" = sum(., na.rm = T))),
-    #   by = groupByFields
-    # ) %>% 
-    # inner_join(
-    #   dt.g %>% summarise_if(is.numeric, funs("mad" = mad(., na.rm = T))),
-    #   by = groupByFields
-    # ) %>% 
+    # fill NAs if nessesary
     mutate_if(
-      is.numeric, 
-      funs(if_else(is.nan(.) | is.infinite(.), NA_real_, as.numeric(.)))
-    ) %>% 
-    ungroup()
+      is_double,
+      funs(replace_na(., .fillNA))
+    )
 }
-
 
 
 
@@ -175,7 +167,7 @@ prevLoan.getHistory <- function(dt) {
 #' @param .minSD 
 #' @param .minNotNA 
 #'
-prevLoan.getHistoryStats <- function(dt, .minObservationNumber = 100, .minSD = .01, .minNotNA = .01, .replaceNA = NA_real_) {
+prevLoan._getHistoryStats <- function(dt, .minObservationNumber = 100, .minSD = .01, .minNotNA = .01, .replaceNA = NA_real_) {
   require(dplyr)
   require(data.table)
   require(purrr)
