@@ -61,7 +61,7 @@ common.fe.calcStatsByGroup <- function(dt,
       funs(if_else(. == 0L, as.integer(.fillNA), .))
     ) %>% 
     select(
-      -contains("_is.na_")
+      -contains("_is.na")
     )
 }
 
@@ -255,7 +255,7 @@ local({
   stopifnot(
     nrow(dt) > 0,
     ncol(dt %>% select_if(is.numeric)) > 0,
-    common.fe.findCorrelatedCols(dt, .threshold = .8, .extraFields = "Id") == c("V1", "V2")
+    common.fe.findCorrelatedCols(dt, .threshold = .6, .extraFields = "Id") == c("V1", "V2")
   )
 })
 

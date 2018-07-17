@@ -25,7 +25,6 @@ prevLoan.load <- function(.config) {
 #' @param dt 
 #'
 prevLoan.filter <- function(dt) {
-  stopifnot(is.data.frame(dt))
   dt
 }
 
@@ -55,15 +54,14 @@ prevLoan.preprocessing <- function(dt) {
     ) %>% 
     mutate(
       FlagLastApplPerContract = if_else(FlagLastApplPerContract == "Y", 1L, 0L),
-      FlagCashThroughBank = if_else(NamePaymentType == "cash_through_the_bank", 1L, 0L)
-      # warn: long runnning convert operation
+      FlagCashThroughBank = if_else(NamePaymentType == "cash_through_the_bank", 1L, 0L, -1L)
+      # task: long runnning convert operation
       # WeekdayApprProcessStart = wdays[WeekdayApprProcessStart],
       # NameYieldGroup = if_else(!is.na(NameYieldGroup), interestRates[NameYieldGroup], 0L) 
     ) %>% 
     select(
-      -NamePaymentType,
-      # low variance
-      -FlagLastApplPerContract, -NflagLastApplInDay 
+      -NamePaymentType, # use in FlagCashThroughBank
+      -FlagLastApplPerContract, -NflagLastApplInDay # low variance
     ) %>% 
     ## numeric features preprocessing
     mutate_at(
@@ -84,10 +82,16 @@ prevLoan.preprocessing <- function(dt) {
 #' 
 #'
 #' @param dt 
+#' @param .fillNA 
+#' @param .minObservationNumber 
+#' @param .minSD 
+#' @param .minNA 
+#' @param installmentsPayments 
 #'
 prevLoan.getHistoryStats <- function(dt, 
+                                     installmentsPayments,
                                      .fillNA = NA_real_,
-                                     .minObservationNumber = 100, 
+                                     .minObservationNumber = 100L, 
                                      .minSD = .01, .minNA = .1) {
   require(dplyr)
   require(tidyr)
@@ -95,6 +99,7 @@ prevLoan.getHistoryStats <- function(dt,
   
   stopifnot(
     is.data.frame(dt),
+    is.data.frame(installmentsPayments),
     is.numeric(.fillNA),
     is.numeric(.minObservationNumber),
     is.numeric(.minSD),
@@ -126,6 +131,10 @@ prevLoan.getHistoryStats <- function(dt,
       n() >= .minObservationNumber
     ) %>% 
     ungroup() %>% 
+    # add installments payments info
+    inner_join(
+      installmentsPayments, by = "SkIdPrev"
+    ) %>% 
     # order by decision about previous application made
     arrange(DaysDecision)
   
@@ -137,13 +146,18 @@ prevLoan.getHistoryStats <- function(dt,
   dt %>% 
     common.fe.calcStatsByGroups(.,
                                 keyField, 
-                                list(".", "NameContractType", "NameContractStatus", "NameProductType", "NamePortfolio", "NameClientType", "ProductCombination"),
+                                list(".", "NameContractType", "NameContractStatus", "NameProductType", "NamePortfolio", 
+                                     "NameClientType", "ProductCombination", "FlagCashThroughBank"),
                                 values,
-                                .fillNA = NA_real_, .drop = T)  %>% 
+                                .fillNA = NA_real_, .drop = T) %>% 
     # remove redundant fields by mask
-    # select(
-    #   -matches("_min_([[:alnum:]]_)?max"),
-    # ) %>% 
+    select(
+      -matches("_min_([[:alnum:]]_)?max"),
+      -matches("_max_([[:alnum:]]_)?min"),
+      -matches("_length_([[:alnum:]]_)+length"),
+      -matches("_(min|median|max)_([[:alnum:]]_)?length"),
+      -matches("_first")
+    ) %>% 
     # remove redundant fields by stats
     select(
       -one_of(common.fe.findRedundantCols(., .minSD, .minNA))
@@ -151,68 +165,11 @@ prevLoan.getHistoryStats <- function(dt,
     select(
       -one_of(common.fe.findCorrelatedCols(., .threshold = .9, .fillNA = 0, .extraFields = keyField))
     ) %>% 
-    # fill NAs if nessesary
+    # fill NAs if necessary
     mutate_if(
       is_double,
       funs(replace_na(., .fillNA))
     )
 }
-
-
-
-#' 
-#'
-#' @param dt 
-#' @param .minObservationNumber 
-#' @param .minSD 
-#' @param .minNotNA 
-#'
-prevLoan._getHistoryStats <- function(dt, .minObservationNumber = 100, .minSD = .01, .minNotNA = .01, .replaceNA = NA_real_) {
-  require(dplyr)
-  require(data.table)
-  require(purrr)
-  require(psych)
-  
-  stopifnot(
-    is.data.frame(dt),
-    is.numeric(.minObservationNumber),
-    is.numeric(.minSD),
-    is.numeric(.minNotNA), 
-    is.numeric(.replaceNA)
-  )
-  
-  
-  groupByFields <- c("SkIdCurr", "NameContractType", "NameContractStatus")
-  
-  dt <- dt %>% 
-    group_by(NameContractType, NameContractStatus) %>% 
-    filter(n() >= .minObservationNumber) %>% 
-    ungroup() %>% 
-    as.data.table(., key = groupByFields)
-  
-  dt <- melt(dt, id.var = groupByFields, variable.name = "Metrics")
-  dt <- dt[, Metrics := paste("prev", NameContractType, NameContractStatus, Metrics, sep = "__")]
-  
-  dt <- dcast.data.table(dt, SkIdCurr ~ Metrics, value.var = "value")
-  
-  
-  dt.desc <- describe(dt %>%
-                        mutate_if(
-                          is.numeric, funs(if_else(is.nan(.) | is.infinite(.), NA_real_, as.numeric(.)))
-                        ))
-  
-  redundantFieldsIndex <- dt.desc %>% 
-    filter(sd < .minSD | n/nrow(dt) < .minNotNA) %>% 
-    select(vars) %>% 
-    as_vector
-  
-  dt %>% 
-    select(-one_of(names(dt)[redundantFieldsIndex])) %>% 
-    mutate_if(
-      is_double,
-      funs(replace_na(., .replaceNA))
-    )
-}
-
 
 

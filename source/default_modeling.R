@@ -175,13 +175,6 @@ replaceMissingValues <- function(.datasets, .metadata) {
         
         .x
       }
-    ) #%>%
-  # map(
-  #   ~ .x %>% 
-  #     mutate_at(
-  #       vars(starts_with("bureau__"), starts_with("prev__"), starts_with("...")), # TODO
-  #       funs(replace_na(., 0))
-  #     )
-  # )
+    )
 }
 

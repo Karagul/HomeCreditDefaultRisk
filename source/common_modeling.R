@@ -426,13 +426,13 @@ common.modeling.selectHyperparams <- function(.train, .test, .gridSearch, .nroun
   
   .gridSearch %>% 
     cbind(list(
+      Id = 1:nrow(.gridSearch),
       AUC_train = trainPerf,
       AUC_test = testPerf
     )) %>% 
     mutate(
       AUC_diff = abs(AUC_train - AUC_test)
-    ) %>% 
-    arrange(-AUC_test)
+    )
 }
 
 
