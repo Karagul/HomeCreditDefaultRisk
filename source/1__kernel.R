@@ -15,40 +15,27 @@ suppressPackageStartupMessages({
 
 
 
-
-
 ### 1. Load/preprocessing datasets ----
 source("datasets_loader.R")
 
 data.columns.desc <- fread(sprintf("%s/HomeCredit_columns_description.csv", job$Config$DataDir))
 
 loans <- loader.loans()
-
-prevLoans <- loader.prevLoans()
-
 bureau <- loader.bureau()
-
-pos_cash_balances <- loader.pos_cash_balance_stats()
-
-credit_card_balances <- loader.credit_card_balance_stats()
-
-installments_payments <- loader.installments_payments_stats()
-
+prevLoans <- loader.prevLoans()
 
 
 ### 2. Feature engineering ----
+
 ## 2.1. Join datasets
 loans.metadata <- loan.getMetadata(loans$Train)
-keyField <- "SkIdCurr"
 
-datasets <- loans %>% 
-  map(~ .x %>% 
-        left_join(bureau, by = keyField) #%>% 
-        #left_join(prevLoans, by = keyField) %>% 
-        #left_join(pos_cash_balances, by = keyField) %>% 
-        #left_join(credit_card_balances, by = keyField) %>% 
-        #left_join(installments_payments, by = keyField)
-      )
+datasets <- loans %>%
+  map(
+    ~ .x %>% 
+        left_join(bureau, by = loans.metadata$Key) %>% 
+        left_join(prevLoans, by = loans.metadata$Key)
+    )
 
 stopifnot(
   length(datasets) == length(loans),
@@ -59,65 +46,91 @@ stopifnot(
 )
 
 
-## 2.2. save/load data to/from checkpoint
-checkpointName <- "datasets_2018-06-28"
-#saveRDS(datasets, sprintf("%s/%s.rds", job$Config$CacheDir, checkpointName))
-datasets <- readRDS(sprintf("%s/%s.rds", job$Config$CacheDir, checkpointName)) # also load loan and loans.metadata
-
-
 
 ### 3. Train model ----
 
 ## prepare datasets
 source("default_modeling.R")
 
-# at first create validation dataset # TODO: create folds here
-datasets <- splitDataset(datasets, loans.metadata)
-
-datasets.x <- datasets
-datasets.x <- encodingFeatures(datasets.x, loans.metadata)
-
-datasets.x <- removeRedundantCols(datasets.x, loans.metadata)
-#datasets <- replaceMissingValues(datasets, loans.metadata)
-
-
-## convert to lgb datasets
-mTrain <- lgb.Dataset(data = common.modeling.convertToMatrix(datasets.x$Train, loans.metadata),
-                      label = datasets.x$Train$Label)
-
-mTest <- lgb.Dataset(data = common.modeling.convertToMatrix(datasets.x$Valid, loans.metadata),
-                     label = datasets.x$Valid$Label)
-
-
-## compute hyperparams
 grid <- common.modeling.getHyperparams(.size = 100L,
-                                             .learning_rate = c(.06, .08),
-                                             .max_depth = c(7:9),
-                                             .max_bin = 255L,
-                                             .num_leaves = c(27, 35, 43),
-                                             .min_data_in_leaf = c(4, 8, 16),
-                                             .min_sum_hessian_in_leaf = c(.001),
-                                             .feature_fraction = c(.75, .85),
-                                             .bagging_fraction = c(.9, .95),
-                                             .bagging_freq = 6,
-                                             .lambda_l1 = c(0.016, 0.024, 0.032),
-                                             .lambda_l2 = c(0.016, 0.024, 0.032),
-                                             .min_split_gain = 0,
-                                             .scale_pos_weight = c(4, 8, 12)
-                                             ) # %>%
-gridSearch <- common.modeling.selectHyperparams(mTrain, mTest, grid, .nrounds = 32L)
+                                       .learning_rate = c(.08),
+                                       .max_depth = c(7:8),
+                                       .max_bin = c(53, 127, 255),
+                                       .num_leaves = c(47),
+                                       .min_data_in_leaf = c(2, 4),
+                                       .min_sum_hessian_in_leaf = c(.001, .01),
+                                       .feature_fraction = c(.85, .90, .95),
+                                       .bagging_fraction = c(.9, .95, 1),
+                                       .bagging_freq = 6,
+                                       .lambda_l1 = c(.064, .128, .256),
+                                       .lambda_l2 = c(.064, .128, .256),
+                                       .min_split_gain = 0,
+                                       .scale_pos_weight = c(4:6)
+                                       )
+
+grid <- gridSearch %>% top_n(10, AUC_test) %>% select(-Id, -starts_with("AUC"))
+
+datasets.orig <- datasets
+
+interations_num <- 1L
+cv_results <- list(interations_num)
+
+for (i in 1:interations_num) {
+  write(sprintf("CV iteration #%s is starting...", i), stdout())
+  
+  ## prepare dataset
+  datasets <- datasets.orig %>% 
+    splitDataset(., loans.metadata) %>%  
+    encodingFeatures(., loans.metadata) %>% 
+    replaceMissingValues(., loans.metadata, "(Avg|Mode|Medi)$", median) %>% 
+    replaceMissingValues(., loans.metadata, "(ExtSource\\d)$", mean) 
+  
+  
+  ## convert to lgb datasets
+  mTrain <- lgb.Dataset(data = common.modeling.convertToMatrix(datasets$Train, loans.metadata),
+                        label = datasets$Train$Label)
+  
+  mTest <- lgb.Dataset(data = common.modeling.convertToMatrix(datasets$Valid, loans.metadata),
+                       label = datasets$Valid$Label)
+  
+  
+  ## compute hyperparams
+  gridSearch <- common.modeling.selectHyperparams(mTrain, mTest, grid, .nrounds = 32L)
+  View(gridSearch)
+  cv_results[[i]] <- gridSearch %>% select(Id, starts_with("AUC"))
+  
+  
+  ## GC
+  rm(datasets)
+  rm(mTrain)
+  rm(mTest)
+  
+  gc()
+}
+
+
+gridSearch <- cv_results %>%
+    bind_cols %>% 
+    select(Id, contains("AUC_test")) %>% 
+    gather(key, measure, -Id) %>% 
+    group_by(Id) %>% 
+    summarise(
+      AUC_min = min(measure),
+      AUC_mean = mean(measure),
+      AUC_max = max(measure),
+      AUC_sd = sd(measure)
+    ) %>% 
+    bind_cols(grid) %>% 
+    arrange(-AUC_mean)
 
 View(gridSearch)
-saveRDS(gridSearch, "temp/gridSearch_2018-06-28__200_3.rds")
-gridSearch.prev <- gridSearch
-# rm(gridSearch)
 
 
 ## train model
-modelParams <- gridSearch %>% top_n(1, AUC_test) %>% select(-starts_with("AUC")) %>% as.list
+modelParams <- gridSearch %>% top_n(1, AUC_mean) %>% select(-Id, -starts_with("AUC")) %>% as.list
 modelParams$learning_rate <- .01
 
-model <- common.modeling.train(mTrain, NULL, modelParams, 1e3)
+model <- common.modeling.train(mTrain, NULL, modelParams, .nrounds = 2e3L)
 
 
 ## predict
@@ -138,11 +151,15 @@ stopifnot(
 ### 5. Eval model ----
 metrics <- list(
   Perfomance = map(list(Train = predictions$Train, Valid = predictions$Valid),
-                   ~ common.modeling.evaluateModel(.x %>% select(Label, Score))),
+                   ~ common.modeling.evaluateModel(.x %>% transmute(Label, Score))),
   Hyperparams = modelParams,
   FeatureImportance = lgb.importance(model, percentage = T) %>% head(50),
   Metadata = loans.metadata
 )
+
+metrics[["Perfomance"]][["Train"]][["ROC_AUC"]]
+metrics[["Perfomance"]][["Valid"]][["ROC_AUC"]]
+
 
 common.modeling.saveArtifacts(
   "homecreditdefault", 
