@@ -40,10 +40,15 @@ loader.bureau <- function(.config = job$Config) {
   
   source("bureau.R")
   
-  dt <- bureau.getHistoryStats(.config)
+  balances <- bureau.getBalancesStats(.config)
+  
+  dt <- bureau.load(.config) %>% 
+    burea.filter %>% 
+    burea.preprocessing %>% 
+    bureau.getHistoryStats(., balances) %>% 
+    bureau.featureSelection
   
   names(dt)[-1] <- paste0("bureau__", names(dt)[-1])
-  
   
   dt
 }
@@ -56,13 +61,19 @@ loader.prevLoans <- function(.config = job$Config) {
   
   source("previous_loan.R")
   
+  installments_payments <- loader.installments_payments_stats()
+  # TODO: load and join other datasets
+  # pos_cash_balances <- loader.pos_cash_balance_stats()
+  # credit_card_balances <- loader.credit_card_balance_stats()
+  
   dt <- prevLoan.load(.config) %>% 
     prevLoan.filter %>% 
     prevLoan.preprocessing %>% 
-    prevLoan.getHistoryStats
+    prevLoan.getHistoryStats(., installments_payments) %>% 
+    prevLoan.featureSelection
+  
   
   names(dt)[-1] <- paste0("prevLoans__", names(dt)[-1])
-  
   
   dt
 }
@@ -71,39 +82,14 @@ loader.prevLoans <- function(.config = job$Config) {
 
 #' Load payment history for previous loans at bank
 #'
-loader.installments_payments_stats <- function(.config = job$Config, .calcStatsBy = c("SkIdPrev")) {
+loader.installments_payments_stats <- function(.config = job$Config) {
   
   source("installments_payment.R")
   
-
-  dt <- installments_payment.load(.config)
-  
-  metadata <- installments_payment.getMetadata(dt)
-  
-  dt <- dt %>%
-    installments_payment.clean(., metadata) %>%
-    installments_payment.convert(., metadata)
-  
-  dt.stats <- common.modeling.calcDescStats(dt %>% 
-                                              mutate(
-                                                DaysInstalment_DaysEntryPayment_diff = DaysInstalment - DaysEntryPayment,
-                                                AmtInstalment_AmtPayment_diff = AmtInstalment - AmtPayment
-                                                ) %>% 
-                                              select(-SkIdCurr),
-                                            .calcStatsBy)
-  
-  glimpse(dt.stats)
-  
-  
-  dt.stats.w <- installments_payment.toWideTable(dt.stats, .fillNA = 0)%>% 
-    inner_join(
-      dt %>% distinct(SkIdPrev, SkIdCurr, .keep_all = F),
-      by = "SkIdPrev"
-    )
-  
-  describe(dt.stats.w)
-  
-  loader._flatternStats(dt.stats.w)
+  installments_payment.load(.config) %>%
+    installments_payment.clean %>%
+    installments_payment.preprocessing %>% 
+    installments_payment.getHistoryStats
 }
 
 

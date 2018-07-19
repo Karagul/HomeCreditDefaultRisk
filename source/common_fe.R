@@ -36,7 +36,7 @@ common.fe.calcStatsByGroup <- function(dt,
   df %>% 
     data.table::dcast(., 
                       formula = .formula, 
-                      fun = list(min, median, max), # list(min, median, mean, max, sum, mad, sd)
+                      fun = list(min, mean, max), # list(min, median, mean, max, sum, mad, sd)
                       value.var = .values,
                       drop = .drop,
                       fill = .fillNA,

@@ -5,6 +5,10 @@
 #'
 
 
+# Import dependencies
+source("common_fe.R")
+
+
 #'
 #'
 #'
@@ -72,7 +76,7 @@ installments_payment.getMetadata <- function(dt) {
 #' @param dt 
 #' @param .metadata 
 #' 
-installments_payment.clean <- function(dt, .metadata) {
+installments_payment.clean <- function(dt) {
   dt
 }
 
@@ -81,9 +85,13 @@ installments_payment.clean <- function(dt, .metadata) {
 #' 
 #'
 #' @param dt 
-#' @param .metadata 
 #'
-installments_payment.convert <- function(dt, .metadata) {
+installments_payment.preprocessing <- function(dt) {
+  require(dplyr)
+  stopifnot(
+    is.data.frame(dt)
+  )
+  
   dt %>% 
     mutate_at(
       vars(starts_with("Num"), starts_with("Days")),
@@ -92,47 +100,55 @@ installments_payment.convert <- function(dt, .metadata) {
     mutate_at(
       vars(starts_with("Amt")), 
       as.double
+    ) %>% 
+    mutate(
+      DaysInstalment_DaysEntryPayment_diff = DaysInstalment - DaysEntryPayment,
+      AmtInstalment_AmtPayment_diff = AmtInstalment - AmtPayment
     )
 }
-
 
 
 
 #' 
 #'
 #' @param dt 
-#' @param .groupByFields 
-#' @param .prefix 
 #' @param .fillNA 
+#' @param .minObservationNumber 
+#' @param .minSD 
+#' @param .minNA 
 #'
-installments_payment.toWideTable <- function(dt, .groupByFields = "SkIdPrev", .prefix = "installments_payments", .fillNA = NA_real_) {
+installments_payment.getHistoryStats <- function(dt, 
+                                                 .fillNA = NA_real_,
+                                                 .minObservationNumber = 100L, 
+                                                 .minSD = .01, .minNA = .1) {
+  
   require(dplyr)
-  require(data.table)
+  require(tidyr)
+  require(purrr)
+  
   stopifnot(
     is.data.frame(dt),
-    is.character(.groupByFields),
-    is.character(.prefix),
-    is.double(.fillNA)
+    is.numeric(.fillNA),
+    is.numeric(.minObservationNumber),
+    is.numeric(.minSD),
+    is.numeric(.minNA)
   )
   
-  names(dt) <- c("SkIdPrev", paste(.prefix , names(dt)[-1], sep = "__"))
+  keyField <- "SkIdPrev"
   
+  values <- setdiff(names(dt %>% select_if(is.numeric)),
+                    c(keyField, "SkIdCurr"))
   
-  # remove redundant cols
-  cols <- common.modeling.getRedundantCols(dt)
-  if (!is_empty(cols)) {
-    dt <- dt %>% select(-one_of(cols))
-  } else {
-    dt
-  }
-  
-  
-  # remove NAs
-  dt %>% 
-    select_if(
-      is.numeric,
-      funs(replace_na(., .fillNA))
+  dt <- dt %>% 
+    arrange(DaysInstalment) %>% 
+    common.fe.calcStatsByGroups(., 
+                                keyField, ".", values,
+                               .fillNA = NA_real_, .drop = T) %>%
+    select(
+      -matches("_(first|last)")
+    ) %>%
+    select(
+      -one_of(common.fe.findRedundantCols(., .minSD, .minNA))
     )
 }
-
 

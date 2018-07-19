@@ -24,8 +24,38 @@ prevLoan.load <- function(.config) {
 #'
 #' @param dt 
 #'
-prevLoan.filter <- function(dt) {
-  dt
+prevLoan.filter <- function(dt, .minObservationNumber = 100L) {
+  require(dplyr)
+  stopifnot(
+    is.data.frame(dt),
+    is.numeric(.minObservationNumber)
+  )
+  
+  
+  dt %>% 
+    ## prepare to filter
+    mutate_if(
+      is.character,
+      funs(if_else(!(is.na(.) | . %in% c("XAP", "XNA")), 
+                   str_replace_all(str_to_lower(.), "\\W", "_"),
+                   NA_character_))
+    ) %>% 
+    mutate_at(
+      vars(starts_with("Name")),
+      funs(if_else(!is.na(.), ., "-1"))
+    ) %>% 
+    ## filter rare cases
+    group_by(
+      NameContractType, NameContractStatus
+    ) %>% 
+    filter(
+      n() >= .minObservationNumber
+    ) %>% 
+    ungroup() %>% 
+    ## another filters
+    filter(
+      RateDownPayment >= 0
+    )
 }
 
 
@@ -46,12 +76,6 @@ prevLoan.preprocessing <- function(dt) {
   
  dt %>% 
     ## character features preprocessing
-    mutate_if(
-      is.character,
-      funs(if_else(!(is.na(.) | . %in% c("XAP", "XNA")), 
-                   str_replace_all(str_to_lower(.), "\\W", "_"),
-                   NA_character_))
-    ) %>% 
     mutate(
       FlagLastApplPerContract = if_else(FlagLastApplPerContract == "Y", 1L, 0L),
       FlagCashThroughBank = if_else(NamePaymentType == "cash_through_the_bank", 1L, 0L, -1L)
@@ -71,8 +95,12 @@ prevLoan.preprocessing <- function(dt) {
    mutate(
      SellerplaceArea = if_else(SellerplaceArea != -1, SellerplaceArea, NA_integer_)
    ) %>% 
-   filter(
-     RateDownPayment >= 0
+   ## add features
+   mutate(
+     CreditDuration = AmtCredit/AmtAnnuity,
+     CreditPercent = (AmtCredit - AmtGoodsPrice) / AmtCredit / CreditDuration * 12,
+     AmtApplication_AmtCredit_ratio = AmtCredit/AmtApplication,
+     AmtDownPayment_AmtAnnuity_ratio = AmtDownPayment/AmtCredit
    )
 }
 
@@ -83,16 +111,9 @@ prevLoan.preprocessing <- function(dt) {
 #'
 #' @param dt 
 #' @param .fillNA 
-#' @param .minObservationNumber 
-#' @param .minSD 
-#' @param .minNA 
 #' @param installmentsPayments 
 #'
-prevLoan.getHistoryStats <- function(dt, 
-                                     installmentsPayments,
-                                     .fillNA = NA_real_,
-                                     .minObservationNumber = 100L, 
-                                     .minSD = .01, .minNA = .1) {
+prevLoan.getHistoryStats <- function(dt, installmentsPayments, .fillNA = NA_real_) {
   require(dplyr)
   require(tidyr)
   require(purrr)
@@ -100,41 +121,16 @@ prevLoan.getHistoryStats <- function(dt,
   stopifnot(
     is.data.frame(dt),
     is.data.frame(installmentsPayments),
-    is.numeric(.fillNA),
-    is.numeric(.minObservationNumber),
-    is.numeric(.minSD),
-    is.numeric(.minNA)
+    is.numeric(.fillNA)
   )
   
   keyField <- "SkIdCurr"
   
   
   ## 1
-  dt <- dt %>%
-    # add features
-    mutate(
-      CreditDuration = AmtCredit/AmtAnnuity,
-      CreditPercent = (AmtCredit - AmtGoodsPrice) / AmtCredit / CreditDuration * 12,
-      AmtApplication_AmtCredit_ratio = AmtCredit/AmtApplication,
-      AmtDownPayment_AmtAnnuity_ratio = AmtDownPayment/AmtCredit
-    ) %>% 
-    # fill missing categorical features
-    mutate_at(
-      vars(starts_with("Name")),
-      funs(if_else(!is.na(.), ., "-1"))
-    ) %>% 
-    # filter rare cases
-    group_by(
-      NameContractType, NameContractStatus
-    ) %>% 
-    filter(
-      n() >= .minObservationNumber
-    ) %>% 
-    ungroup() %>% 
+  dt <- dt %>% 
     # add installments payments info
-    inner_join(
-      installmentsPayments, by = "SkIdPrev"
-    ) %>% 
+    inner_join(installmentsPayments, by = "SkIdPrev") %>% 
     # order by decision about previous application made
     arrange(DaysDecision)
   
@@ -147,28 +143,50 @@ prevLoan.getHistoryStats <- function(dt,
     common.fe.calcStatsByGroups(.,
                                 keyField, 
                                 list(".", "NameContractType", "NameContractStatus", "NameProductType", "NamePortfolio", 
-                                     "NameClientType", "ProductCombination", "FlagCashThroughBank"),
+                                     "NameClientType", "ProductCombination", "FlagCashThroughBank", "NameYieldGroup"),
                                 values,
                                 .fillNA = NA_real_, .drop = T) %>% 
-    # remove redundant fields by mask
-    select(
-      -matches("_min_([[:alnum:]]_)?max"),
-      -matches("_max_([[:alnum:]]_)?min"),
-      -matches("_length_([[:alnum:]]_)+length"),
-      -matches("_(min|median|max)_([[:alnum:]]_)?length"),
-      -matches("_first")
-    ) %>% 
-    # remove redundant fields by stats
-    select(
-      -one_of(common.fe.findRedundantCols(., .minSD, .minNA))
-    ) %>% 
-    select(
-      -one_of(common.fe.findCorrelatedCols(., .threshold = .9, .fillNA = 0, .extraFields = keyField))
-    ) %>% 
     # fill NAs if necessary
     mutate_if(
       is_double,
       funs(replace_na(., .fillNA))
+    )
+}
+
+
+
+#'
+#'
+#' @param dt 
+#'
+prevLoan.featureSelection <- function(dt, .minSD = .01, .minNA = .01) {
+  require(dplyr)
+  stopifnot(
+    is.data.frame(dt),
+    is.numeric(.minSD),
+    is.numeric(.minNA)
+  )
+  
+  
+  keyField <- "SkIdCurr"
+  
+  dt %>%
+    ## remove redundant fields by mask
+    select(
+      -matches("_(first)")
+    ) %>% 
+    select(
+      -matches("_min_([[:alnum:]]_)?max"),
+      -matches("_max_([[:alnum:]]_)?min"),
+      -matches("_length_([[:alnum:]]_)+length"),
+      -matches("_(min|median|max)_([[:alnum:]]_)?length")
+    ) %>% 
+    ## remove redundant fields by stats
+    select(
+      -one_of(common.fe.findRedundantCols(., .minSD, .minNA))
+    ) %>%
+    select(
+      -one_of(common.fe.findCorrelatedCols(., .threshold = .9, .fillNA = 0, .extraFields = keyField))
     )
 }
 

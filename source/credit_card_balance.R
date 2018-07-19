@@ -117,7 +117,10 @@ credit_card_balance.convert <- function(dt, .metadata) {
 #' @param .prefix 
 #' @param .fillNA 
 #'
-credit_card_balance.toWideTable <- function(dt, .groupByFields = c("SkIdPrev", "NameContractStatus"), .prefix = "credit_card_balance", .fillNA = NA_real_) {
+credit_card_balance.toWideTable <- function(dt, 
+                                            .groupByFields = c("SkIdPrev", "NameContractStatus"),
+                                            .prefix = "credit_card_balance", 
+                                            .fillNA = NA_real_) {
   require(dplyr)
   require(data.table)
   stopifnot(
