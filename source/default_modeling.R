@@ -5,6 +5,7 @@
 #' 
 
 
+
 #' 
 #'
 #' @param .datasets 
@@ -38,7 +39,7 @@ splitDataset <- function(.datasets, .metadata) {
   )
   
   
-  sDatasets <- common.modeling.splitDataset(.datasets$Train, "SkIdCurr") # TODO: change on .metadata$KeyField
+  sDatasets <- common.modeling.splitDataset(.datasets$Train, .metadata$Key)
   .datasets$Train <- sDatasets$Train
   .datasets$Valid <- sDatasets$Valid
   
@@ -60,17 +61,20 @@ splitDataset <- function(.datasets, .metadata) {
 #' @param .metadata 
 #'
 encodingFeatures <- function(.datasets, .metadata) {
+  require(dplyr)
+  require(purrr)
+  
   stopifnot(
-    is.list(.datasets) && length(.datasets) == 3,
+    is.list(.datasets) && length(.datasets) > 1,
     is.list(.metadata)
   )
   
   
+  .metadata$Features$FactorSLE <- c(.metadata$Features$FactorSLE, c("EmergencystateMode"))
+  
   ## calc encoders
   encoders.OH <- .metadata$Features$FactorOHE %>% 
     map(~ common.modeling.getOneHotEncoder(.x, .datasets$Train))
-  
-  .metadata$Features$FactorSLE <- c(.metadata$Features$FactorSLE, c("EmergencystateMode"))
   
   encoders.SLE <- .metadata$Features$FactorSLE %>% 
     map(~ common.modeling.smoothedLikelihoodEncoding(.x, .datasets$Train))
@@ -82,9 +86,8 @@ encodingFeatures <- function(.datasets, .metadata) {
     map(~ common.modeling.applyEncoders(.x, encoders.SLE, .metadata$Features$FactorSLE))
   
   stopifnot(
-    length(.datasets) == 3,
-    nrow(.datasets$Train) > nrow(.datasets$Valid),
-    nrow(.datasets$Valid) > nrow(.datasets$Test),
+    length(.datasets) > 1,
+    nrow(.datasets$Train) > nrow(.datasets$Test),
     nrow(.datasets$Test) > 0
   )
   
@@ -95,7 +98,7 @@ encodingFeatures <- function(.datasets, .metadata) {
   
   .datasets <- .datasets %>% 
     map(
-      ~ common.modeling.replaceNA(.x, .datasets$Train %>% select(matches(factorSLE.pattern)), median)
+      ~ common.modeling.replaceNA(.x, .datasets$Train %>% select(matches(factorSLE.pattern)), median) # TODO: introduce .predicate
     )
   
   # for OH-encoded features # warn: transformation modify not only OHE features
@@ -137,26 +140,30 @@ encodingFeatures <- function(.datasets, .metadata) {
 
 
 
+
 #' 
 #'
 #' @param .datasets 
 #' @param .metadata 
 #'
-replaceMissingValues <- function(.datasets, .metadata) {
+#' TODO: replace to common.modeling.replaceNA
+#' 
+replaceMissingValues <- function(.datasets, .metadata, .fields, .predicate) {
   stopifnot(
-    is.list(.datasets) && length(.datasets) == 3,
-    is.list(.metadata)
+    is.list(.datasets) && length(.datasets) > 1,
+    is.list(.metadata),
+    is.character(.fields),
+    is.function(.predicate)
   )
   
   
-  fieldNames <- names(.datasets$Train %>% 
-                        select(matches("(Avg|Mode|Medi)$")))
+  fieldNames <- names(.datasets$Train %>% select(matches(.fields)))
   
   write(sprintf("Replace missing values for: %s", paste(fieldNames, collapse = ", ")), stdout())
   
-  apartments.stats <- fieldNames %>% 
+  dt.stats <- fieldNames %>% 
     map(
-      ~ median(.datasets$Train[[.x]], trim = .05, na.rm = T)
+      ~ .predicate(.datasets$Train[[.x]], na.rm = T, trim = .05)
     ) %>%
     set_names(., fieldNames)
   
@@ -165,11 +172,11 @@ replaceMissingValues <- function(.datasets, .metadata) {
     map(
       function(.x) {
         
-        for (i in 1:length(apartments.stats)) {
+        for (i in 1:length(dt.stats)) {
           .x <- .x %>% 
             mutate_at(
-              names(apartments.stats[i]),
-              funs(replace_na(., apartments.stats[[i]] ))
+              names(dt.stats[i]),
+              funs(replace_na(., dt.stats[[i]] ))
             )
         }
         

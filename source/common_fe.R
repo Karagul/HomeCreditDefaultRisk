@@ -5,6 +5,7 @@
 #'
 
 
+
 #' 
 #'
 #' @param dt 
@@ -107,8 +108,9 @@ common.fe.calcStatsByGroups <- function(dt,
 #' @param dt 
 #' @param .sd 
 #' @param .NA 
+#' @param .verbose 
 #'
-common.fe.findRedundantCols <- function(dt, .sd = .01, .NA = .01) {
+common.fe.findRedundantCols <- function(dt, .sd = .01, .NA = .01, .verbose = T) {
   require(dplyr)
   require(purrr)
   require(psych)
@@ -116,7 +118,8 @@ common.fe.findRedundantCols <- function(dt, .sd = .01, .NA = .01) {
   stopifnot(
     is.data.frame(dt),
     is.numeric(.sd),
-    is.numeric(.NA)
+    is.numeric(.NA),
+    is.logical(.verbose)
   )
   
   
@@ -125,7 +128,13 @@ common.fe.findRedundantCols <- function(dt, .sd = .01, .NA = .01) {
     select(vars) %>% 
     as_vector
   
-  names(dt)[desc]
+  n <- names(dt)[desc]
+  
+  if(.verbose & length(n) > 0) {
+    write(sprintf("Deleting redundant columns...\n Count: %s. Names: %s", length(n), paste(n, collapse = ", ")), stdout())
+  }
+  
+  n
 }
 
 
