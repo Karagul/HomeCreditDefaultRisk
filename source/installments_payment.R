@@ -5,22 +5,15 @@
 #'
 
 
-# Import dependencies
-source("common_fe.R")
-
 
 #'
 #'
 #'
 #' @param .config 
 installments_payment.load <- function(.config) {
-  stopifnot(
-    is.list(.config)
-  )
-  
+  stopifnot(is.list(.config))
   fread.csv.zipped("installments_payments.csv", .config$DataDir)
 }
-
 
 
 
@@ -29,9 +22,7 @@ installments_payment.load <- function(.config) {
 #' @param dt 
 #'
 installments_payment.getMetadata <- function(dt) {
-  stopifnot(
-    is.data.frame(dt)
-  )
+  stopifnot(is.data.frame(dt))
   
   
   key <- NULL
@@ -69,8 +60,6 @@ installments_payment.getMetadata <- function(dt) {
 
 
 
-
-
 #' Clear logic errors
 #'
 #' @param dt 
@@ -103,8 +92,13 @@ installments_payment.preprocessing <- function(dt) {
     ) %>% 
     mutate(
       DaysInstalment_DaysEntryPayment_diff = DaysInstalment - DaysEntryPayment,
-      AmtInstalment_AmtPayment_diff = AmtInstalment - AmtPayment
-    )
+      AmtInstalment_AmtPayment_diff = AmtPayment - AmtInstalment,
+      AmtInstalment_AmtPayment_ratio = AmtPayment/(AmtInstalment + 1)
+    ) %>% 
+    select(-c(
+      NumInstalmentNumber,
+      DaysEntryPayment, AmtInstalment
+    ))
 }
 
 
@@ -151,4 +145,5 @@ installments_payment.getHistoryStats <- function(dt,
       -one_of(common.fe.findRedundantCols(., .minSD, .minNA))
     )
 }
+
 

@@ -5,9 +5,6 @@
 #'
 
 
-# Import dependencies
-source("common_fe.R")
-
 
 #' 
 #'
@@ -66,44 +63,54 @@ prevLoan.filter <- function(dt, .minObservationNumber = 100L) {
 #'
 prevLoan.preprocessing <- function(dt) {
   require(dplyr)
-  stopifnot(
-    is.data.frame(dt)
-  )
-  
-  wdays <- c(5, 2, 6, 1, 4, 3, 7); names(wdays) <- c("friday", "tuesday", "saturday", "monday", "thursday", "wednesday", "sunday")
-  interestRates <- c(4:1); names(interestRates) <- c("high", "middle", "low_normal", "low_action")
-  
-  
- dt %>% 
-    ## character features preprocessing
-    mutate(
-      FlagLastApplPerContract = if_else(FlagLastApplPerContract == "Y", 1L, 0L),
-      FlagCashThroughBank = if_else(NamePaymentType == "cash_through_the_bank", 1L, 0L, -1L)
-      # task: long runnning convert operation
-      # WeekdayApprProcessStart = wdays[WeekdayApprProcessStart],
-      # NameYieldGroup = if_else(!is.na(NameYieldGroup), interestRates[NameYieldGroup], 0L) 
+  stopifnot(is.data.frame(dt))
+
+
+ dt %>%
+   ## character features preprocessing
+   # convert char to bit
+   mutate(
+     FlagLastApplPerContract = if_else(FlagLastApplPerContract == "Y", 1L, 0L),
+     FlagCashThroughBank = if_else(NamePaymentType == "cash_through_the_bank", 1L, 0L, -1L)
+   ) %>% 
+   inner_join(
+      data.frame(
+        NameYieldGroup = c("-1", "low_action", "low_normal", "middle", "high"),
+        NameYieldGroup_rate = c(0, 1, 2, 4, 8)
+      ),  by = "NameYieldGroup"
     ) %>% 
     select(
-      -NamePaymentType, # use in FlagCashThroughBank
+      -NamePaymentType, -NameYieldGroup,  # use in FlagCashThroughBank, NameYieldGroup_rate
       -FlagLastApplPerContract, -NflagLastApplInDay # low variance
     ) %>% 
-    ## numeric features preprocessing
-    mutate_at(
-      vars(starts_with("Days")),
-      funs(if_else(. != 365243, as.integer(.), NA_integer_))
-    ) %>% 
+   ## numeric features preprocessing
    mutate(
      SellerplaceArea = if_else(SellerplaceArea != -1, SellerplaceArea, NA_integer_)
    ) %>% 
-   ## add features
+   # credit info features
    mutate(
      CreditDuration = AmtCredit/AmtAnnuity,
      CreditPercent = (AmtCredit - AmtGoodsPrice) / AmtCredit / CreditDuration * 12,
      AmtApplication_AmtCredit_ratio = AmtCredit/AmtApplication,
      AmtDownPayment_AmtAnnuity_ratio = AmtDownPayment/AmtCredit
+   ) %>% 
+   # days features
+   mutate_at(
+     vars(starts_with("Days")),
+     funs(if_else(. != 365243, as.integer(.), NA_integer_))
+   ) %>% 
+   mutate(
+     DaysDecision_DaysTermination_ratio = DaysTermination/DaysDecision,
+     DaysDecision_DaysFirstDrawing_ratio = DaysFirstDrawing/DaysDecision,
+     DaysFirstDrawing_DaysFirstDue_ratio = DaysFirstDue/DaysFirstDrawing,
+     DaysFirstDue_DaysLastDue_ratio = DaysLastDue/DaysFirstDue,
+     DaysLastDue1stVersion_DaysLastDue_ratio = if_else(DaysLastDue1stVersion != 0, DaysLastDue/DaysLastDue1stVersion, 0),
+     DaysLastDue1stVersion_flag = if_else(DaysLastDue1stVersion < 0, 0L, 1L, -1L)
+   ) %>% 
+   select(
+     -DaysTermination, -DaysFirstDrawing, -DaysFirstDue, -DaysLastDue, -DaysLastDue1stVersion
    )
 }
-
 
 
 
@@ -111,39 +118,48 @@ prevLoan.preprocessing <- function(dt) {
 #'
 #' @param dt 
 #' @param .fillNA 
-#' @param installmentsPayments 
+#' @param installments_payments 
 #'
-prevLoan.getHistoryStats <- function(dt, installmentsPayments, .fillNA = NA_real_) {
+prevLoan.getHistoryStats <- function(dt, 
+                                     installments_payments, credit_card_balances, pos_cash_balances,
+                                     .fillNA = NA_real_) {
   require(dplyr)
   require(tidyr)
   require(purrr)
   
+  keyField <- "SkIdPrev"
+  groupByField <- "SkIdCurr"
+  
   stopifnot(
     is.data.frame(dt),
-    is.data.frame(installmentsPayments),
+    is.data.frame(installments_payments),
+    is.data.frame(credit_card_balances),
+    is.data.frame(pos_cash_balances),
+    intersect(names(credit_card_balances), names(installments_payments)) == keyField,
+    intersect(names(installments_payments), names(pos_cash_balances)) == keyField,
+    intersect(names(pos_cash_balances), names(credit_card_balances)) == keyField,
     is.numeric(.fillNA)
   )
-  
-  keyField <- "SkIdCurr"
   
   
   ## 1
   dt <- dt %>% 
     # add installments payments info
-    inner_join(installmentsPayments, by = "SkIdPrev") %>% 
+    inner_join(installments_payments, by = keyField) %>% 
+    inner_join(credit_card_balances, by = keyField) %>% 
+    inner_join(installments_payments, by = keyField) %>% 
     # order by decision about previous application made
     arrange(DaysDecision)
   
   
   ## 2
   values <- setdiff(names(dt %>% select_if(is.numeric)),
-                    c(keyField, "SkIdPrev"))
+                    c(keyField, groupByField, "HourApprProcessStart", "SellerplaceArea"))
   
   dt %>% 
     common.fe.calcStatsByGroups(.,
-                                keyField, 
-                                list(".", "NameContractType", "NameContractStatus", "NameProductType", "NamePortfolio", 
-                                     "NameClientType", "ProductCombination", "FlagCashThroughBank", "NameYieldGroup"),
+                                groupByField, 
+                                list("NameContractType", "NameContractStatus", "NamePortfolio", "NameClientType", "ProductCombination"),
                                 values,
                                 .fillNA = NA_real_, .drop = T) %>% 
     # fill NAs if necessary

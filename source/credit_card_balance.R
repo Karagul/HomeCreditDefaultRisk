@@ -5,10 +5,11 @@
 #'
 
 
-#'
+
 #'
 #'
 #' @param .config 
+#' 
 credit_card_balance.load <- function(.config) {
   stopifnot(
     is.list(.config)
@@ -16,7 +17,6 @@ credit_card_balance.load <- function(.config) {
   
   fread.csv.zipped("credit_card_balance.csv", .config$DataDir)
 }
-
 
 
 
@@ -65,14 +65,11 @@ credit_card_balance.getMetadata <- function(dt) {
 
 
 
-
-
 #' Clear logic errors
 #'
 #' @param dt 
-#' @param .metadata 
 #' 
-credit_card_balance.clean <- function(dt, .metadata) {
+credit_card_balance.clean <- function(dt) {
   dt
 }
 
@@ -113,46 +110,83 @@ credit_card_balance.convert <- function(dt, .metadata) {
 #' 
 #'
 #' @param dt 
-#' @param .groupByFields 
-#' @param .prefix 
-#' @param .fillNA 
 #'
-credit_card_balance.toWideTable <- function(dt, 
-                                            .groupByFields = c("SkIdPrev", "NameContractStatus"),
-                                            .prefix = "credit_card_balance", 
-                                            .fillNA = NA_real_) {
+credit_card_balance.preprocessing <- function(dt) {
   require(dplyr)
-  require(data.table)
   stopifnot(
-    is.data.frame(dt),
-    is.character(.groupByFields),
-    is.character(.prefix),
-    is.double(.fillNA)
+    is.data.frame(dt)
   )
   
-  # convert to data table
-  dt <- as.data.table(dt %>% mutate_if(is.integer, as.double))
   
-  dt <- melt(dt, id.var = .groupByFields, variable.name = "V")
-  dt <- dt[, V := paste(.prefix, NameContractStatus, V, sep = "__")]
-  
-  dt <- dcast.data.table(dt, SkIdPrev ~ V, value.var = "value", fill = NA_real_)
-  
-  
-  # remove redundant cols
-  cols <- common.modeling.getRedundantCols(dt)
-  if (!is_empty(cols)) {
-    dt <- dt %>% select(-one_of(cols))
-  } else {
-    dt
-  }
-  
-  
-  # remove NAs
   dt %>% 
-    select_if(
-      is.numeric,
-      funs(replace_na(., .fillNA))
+    ## amount and count drawings
+    mutate_at(
+      vars(starts_with("AmtDrawings")),
+      funs("AmtDrawingsCurrent_ratio" = replace_na(., 0)/(AmtDrawingsCurrent + 1))
+    ) %>% 
+    mutate_at(
+      vars(starts_with("CntDrawings")),
+      funs("CntDrawingsCurrent_ratio" = if_else(CntDrawingsCurrent != 0, ./CntDrawingsCurrent, 0))
+    ) %>% 
+    select(-c(
+      AmtDrawingsAtmCurrent, AmtDrawingsOtherCurrent, AmtDrawingsPosCurrent, AmtDrawingsCurrent_AmtDrawingsCurrent_ratio,
+      CntDrawingsAtmCurrent, CntDrawingsOtherCurrent, CntDrawingsPosCurrent, CntDrawingsCurrent_CntDrawingsCurrent_ratio
+    )) %>% 
+    ## balances and limits
+    mutate(
+      AmtBalance_AmtCreditLimitActual_ratio = (AmtBalance - AmtCreditLimitActual)/AmtCreditLimitActual,
+      AmtInstMinRegularity_AmtCreditLimitActual_ratio = AmtInstMinRegularity/AmtCreditLimitActual,
+      AmtPaymentCurrent_AmtRecivable_ratio = AmtPaymentCurrent/(AmtRecivable + 1)
+    ) %>%
+    select(-c(
+      AmtCreditLimitActual, AmtInstMinRegularity, # already used in AmtBalance|AmtInstMinRegularity_AmtCreditLimitActual_ratio
+      AmtPaymentTotalCurrent, AmtTotalReceivable, AmtReceivablePrincipal, # high correlated w/ AmtPaymentCurrent and AmtRecivable
+      SkDpdDef  # high correlated w/ SkDpd
+    ))
+}
+
+
+
+#' 
+#'
+#' @param dt 
+#' @param .fillNA 
+#' @param .minObservationNumber 
+#' @param .minSD 
+#' @param .minNA 
+#'
+credit_card_balance.getHistoryStats <- function(dt, 
+                                                .fillNA = NA_real_,
+                                                .minObservationNumber = 100L,
+                                                .minSD = .01, .minNA = .1) {
+  
+  require(dplyr)
+  require(tidyr)
+  require(purrr)
+  
+  stopifnot(
+    is.data.frame(dt),
+    is.numeric(.fillNA),
+    is.numeric(.minObservationNumber),
+    is.numeric(.minSD),
+    is.numeric(.minNA)
+  )
+  
+  keyField <- "SkIdPrev"
+  
+  values <- setdiff(names(dt %>% select_if(is.numeric)),
+                    c(keyField, "SkIdCurr"))
+  
+  dt <- dt %>% 
+    arrange(MonthsBalance) %>% 
+    common.fe.calcStatsByGroups(., 
+                                keyField, "NameContractStatus", values,
+                                .fillNA = NA_real_, .drop = T) %>%
+    select(
+      -matches("_(first|last)")
+    ) %>%
+    select(
+      -one_of(common.fe.findRedundantCols(., .minSD, .minNA))
     )
 }
 

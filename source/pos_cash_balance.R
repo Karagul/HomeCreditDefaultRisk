@@ -5,6 +5,7 @@
 #'
 
 
+
 #'
 #'
 #'
@@ -141,42 +142,43 @@ pos_cash_balance.convert <- function(dt, .metadata) {
 #' 
 #'
 #' @param dt 
-#' @param .groupByFields 
-#' @param .prefix 
 #' @param .fillNA 
+#' @param .minObservationNumber 
+#' @param .minSD 
+#' @param .minNA 
 #'
-pos_cash_balance.toWideTable <- function(dt, .groupByFields = c("SkIdPrev", "NameContractStatus"), .prefix = "pos_cash", .fillNA = NA_real_) {
+pos_cash_balance.getHistoryStats <- function(dt, 
+                                             .fillNA = NA_real_,
+                                             .minObservationNumber = 100L, 
+                                             .minSD = .01, .minNA = .1) {
+  
   require(dplyr)
-  require(data.table)
+  require(tidyr)
+  require(purrr)
+  
   stopifnot(
     is.data.frame(dt),
-    is.character(.groupByFields),
-    is.character(.prefix),
-    is.double(.fillNA)
+    is.numeric(.fillNA),
+    is.numeric(.minObservationNumber),
+    is.numeric(.minSD),
+    is.numeric(.minNA)
   )
-
-  dt <- as.data.table(dt %>% mutate_if(is.integer, as.double))
   
-  dt <- melt(dt, id.var = .groupByFields, variable.name = "V")
-  dt <- dt[, V := paste(.prefix, NameContractStatus, V, sep = "__")]
+  keyField <- "SkIdPrev"
   
-  dt <- dcast.data.table(dt, SkIdPrev ~ V, value.var = "value", fill = NA_real_)
+  values <- setdiff(names(dt %>% select_if(is.numeric)),
+                    c(keyField, "SkIdCurr"))
   
-  
-  # remove redundant cols
-  cols <- common.modeling.getRedundantCols(dt)
-  if (!is_empty(cols)) {
-    dt <- dt %>% select(-one_of(cols))
-  } else {
-    dt
-  }
-  
-  
-  # remove NAs
-  dt %>% 
-    select_if(
-      is.numeric,
-      funs(replace_na(., .fillNA))
+  dt <- dt %>% 
+    arrange(MonthsBalance) %>% 
+    common.fe.calcStatsByGroups(., 
+                                keyField, "NameContractStatus", values,
+                                .fillNA = NA_real_, .drop = T) %>%
+    select(
+      -matches("_(first|last)")
+    ) %>%
+    select(
+      -one_of(common.fe.findRedundantCols(., .minSD, .minNA))
     )
 }
 
