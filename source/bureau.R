@@ -5,9 +5,6 @@
 #'
 
 
-# Import dependencies
-source("common_fe.R")
-
 
 #'
 #'
@@ -133,8 +130,13 @@ bureau.getHistoryStats <- function(dt, balances, .fillNA = NA_real_) {
 #' 
 bureau.getBalancesStats <- function(.config, 
                                     .fillNA = NA_real_,
-                                    .minSD = .01, .minNA = .1) {
-  fread.csv.zipped("bureau_balance.csv", .config$DataDir) %>% 
+                                    .minSD = .01, .minNA = .05) {
+  require(dplyr)
+  stopifnot(
+    is.list(.config)
+  )
+  
+  dt <- fread.csv.zipped("bureau_balance.csv", .config$DataDir) %>% 
     common.fe.calcStatsByGroups(.,
                                 "SkIdBureau", list(".", "Status"), "MonthsBalance",
                                 .fillNA, .drop = T) %>%
@@ -144,6 +146,11 @@ bureau.getBalancesStats <- function(.config,
     select(
       -one_of(common.fe.findRedundantCols(., .minSD, .minNA))
     )
+  
+  names(dt)[-1] <- paste0("bb__", names(dt)[-1])
+  
+  
+  dt
 }
 
 
@@ -152,7 +159,7 @@ bureau.getBalancesStats <- function(.config,
 #'
 #' @param dt 
 #'
-bureau.featureSelection <- function(dt, .minSD = .01, .minNA = .01) {
+bureau.featureSelection <- function(dt, .minSD = .01, .minNA = .05) {
   require(dplyr)
   stopifnot(
     is.data.frame(dt),
@@ -166,18 +173,17 @@ bureau.featureSelection <- function(dt, .minSD = .01, .minNA = .01) {
   dt %>% 
     ## remove redundant fields by mask
     select(
-      -matches("_min_([[:alnum:]]_)?max"),
-      -matches("_max_([[:alnum:]]_)?min"),
-      -matches("_length_([[:alnum:]]_)+length"),
-      -matches("_(min|median|max)_([[:alnum:]]_)?length"),
-      -matches("_first")
+      -matches("_(first)"),
+      -matches("_min_([[:alnum:]]+_)?max"),
+      -matches("_max_([[:alnum:]]+_)?min"),
+      -matches("_(min|median|mean|max|sd|mad|length)_([[:alnum:]]+_)?length")
     ) %>% 
     ## remove redundant fields by stats
     select(
       -one_of(common.fe.findRedundantCols(., .minSD, .minNA))
     ) %>%
     select(
-      -one_of(common.fe.findCorrelatedCols(., .threshold = .9, .fillNA = 0, .extraFields = keyField))
+      -one_of(common.fe.findCorrelatedCols(., .threshold = .98, .extraFields = keyField))
     )
 }
 

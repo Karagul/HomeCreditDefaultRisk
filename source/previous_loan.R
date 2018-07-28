@@ -119,6 +119,8 @@ prevLoan.preprocessing <- function(dt) {
 #' @param dt 
 #' @param .fillNA 
 #' @param installments_payments 
+#' @param credit_card_balances 
+#' @param pos_cash_balances 
 #'
 prevLoan.getHistoryStats <- function(dt, 
                                      installments_payments, credit_card_balances, pos_cash_balances,
@@ -159,7 +161,7 @@ prevLoan.getHistoryStats <- function(dt,
   dt %>% 
     common.fe.calcStatsByGroups(.,
                                 groupByField, 
-                                list("NameContractType", "NameContractStatus", "NamePortfolio", "NameClientType", "ProductCombination"),
+                                list(".", "NameContractType", "NameContractStatus", "NamePortfolio", "NameClientType", "ProductCombination"),
                                 values,
                                 .fillNA = NA_real_, .drop = T) %>% 
     # fill NAs if necessary
@@ -175,7 +177,7 @@ prevLoan.getHistoryStats <- function(dt,
 #'
 #' @param dt 
 #'
-prevLoan.featureSelection <- function(dt, .minSD = .01, .minNA = .01) {
+prevLoan.featureSelection <- function(dt, .minSD = .01, .minNA = .05) {
   require(dplyr)
   stopifnot(
     is.data.frame(dt),
@@ -189,20 +191,17 @@ prevLoan.featureSelection <- function(dt, .minSD = .01, .minNA = .01) {
   dt %>%
     ## remove redundant fields by mask
     select(
-      -matches("_(first)")
-    ) %>% 
-    select(
-      -matches("_min_([[:alnum:]]_)?max"),
-      -matches("_max_([[:alnum:]]_)?min"),
-      -matches("_length_([[:alnum:]]_)+length"),
-      -matches("_(min|median|max)_([[:alnum:]]_)?length")
+      -matches("_(first)"),
+      -matches("_min_([[:alnum:]]+_)?max"),
+      -matches("_max_([[:alnum:]]+_)?min"),
+      -matches("_(min|median|mean|max|sd|mad|length)_([[:alnum:]]+_)?length")
     ) %>% 
     ## remove redundant fields by stats
     select(
       -one_of(common.fe.findRedundantCols(., .minSD, .minNA))
     ) %>%
     select(
-      -one_of(common.fe.findCorrelatedCols(., .threshold = .9, .fillNA = 0, .extraFields = keyField))
+      -one_of(common.fe.findCorrelatedCols(., .threshold = .98, .extraFields = keyField))
     )
 }
 

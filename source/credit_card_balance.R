@@ -151,14 +151,12 @@ credit_card_balance.preprocessing <- function(dt) {
 #'
 #' @param dt 
 #' @param .fillNA 
-#' @param .minObservationNumber 
 #' @param .minSD 
 #' @param .minNA 
 #'
 credit_card_balance.getHistoryStats <- function(dt, 
                                                 .fillNA = NA_real_,
-                                                .minObservationNumber = 100L,
-                                                .minSD = .01, .minNA = .1) {
+                                                .minSD = .01, .minNA = .05) {
   
   require(dplyr)
   require(tidyr)
@@ -167,7 +165,6 @@ credit_card_balance.getHistoryStats <- function(dt,
   stopifnot(
     is.data.frame(dt),
     is.numeric(.fillNA),
-    is.numeric(.minObservationNumber),
     is.numeric(.minSD),
     is.numeric(.minNA)
   )
@@ -180,7 +177,7 @@ credit_card_balance.getHistoryStats <- function(dt,
   dt <- dt %>% 
     arrange(MonthsBalance) %>% 
     common.fe.calcStatsByGroups(., 
-                                keyField, "NameContractStatus", values,
+                                keyField, list(".", "NameContractStatus"), values,
                                 .fillNA = NA_real_, .drop = T) %>%
     select(
       -matches("_(first|last)")

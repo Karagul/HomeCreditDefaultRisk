@@ -297,6 +297,7 @@ loan.processingIncome <- function(dt) {
       IncomeToAnnuity_ratio = (AmtIncomeTotal - AmtAnnuity)/AmtIncomeTotal,
       
       CreditDuration = AmtCredit/AmtAnnuity,
+      CreditDuration_DaysEmployed_ratio = CreditDuration/(DaysEmployed + 1),
       CreditPercent = (AmtCredit - AmtGoodsPrice) / AmtCredit / CreditDuration * 12
     ) %>% 
     mutate_at(
@@ -336,13 +337,13 @@ loan.processingExternalSourceScore <- function(dt) {
     ) %>% 
     select(
       -ExtSource1_w, -ExtSource2_w, -ExtSource3_w
-    ) #%>% 
+    ) # %>% 
     # note: decrease model perfomance
     # mutate(
     #   ExtSource1_2_diff = ExtSource1 - ExtSource2,
     #   ExtSource2_3_diff = ExtSource2 - ExtSource3,
     #   ExtSource3_1_diff = ExtSource3 - ExtSource1
-    # )
+    # ) %>% 
     # mutate_at(
     #   c(paste0("ExtSource", c(1:3))),
     #   funs("_mean_diff" = . - ExtSource_mean)
@@ -375,12 +376,16 @@ loan.processingDays <- function(dt) {
     ) %>%
     mutate_at(
       features,
-      funs("DaysBirth_ratio" = ./DaysBirth)
+      funs("DaysBirth_ratio" = ./(DaysBirth + 1))
     )  %>% 
     mutate_at(
       features,
       funs("DaysEmployed_ratio" = ./(DaysEmployed + 1))
     ) %>% 
+    mutate_at(
+      features,
+      funs("DaysIdPublish_ratio" = ./(DaysIdPublish + 1))
+    )%>% 
     mutate(
       OwnCarAge = replace_na(OwnCarAge, 0),
       OwnCarAge_DaysBirth_ratio = OwnCarAge/DaysBirth_years,
@@ -393,7 +398,8 @@ loan.processingDays <- function(dt) {
     )  %>%
     # remove redundant
     select(
-      -DaysBirth_DaysBirth_ratio, -DaysEmployed_DaysEmployed_ratio, -DaysBirth_DaysEmployed_ratio
+      -DaysBirth_DaysBirth_ratio, -DaysEmployed_DaysEmployed_ratio, -DaysIdPublish_DaysIdPublish_ratio,
+      -DaysBirth_DaysEmployed_ratio, -DaysBirth_DaysIdPublish_ratio
     )
 }
 
@@ -423,4 +429,5 @@ loan.missingValuesProcessing <- function(dt, .metadata, .fillNA = NA) {
       funs(replace_na(., as.character(.fillNA)))
     )
 }
+
 
