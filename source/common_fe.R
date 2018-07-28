@@ -37,7 +37,7 @@ common.fe.calcStatsByGroup <- function(dt,
   df %>% 
     data.table::dcast(., 
                       formula = .formula, 
-                      fun = list(min, mean, max), # list(min, median, mean, max, sum, mad, sd)
+                      fun = list(min, mean, median, max), # list(min, median, mean, max, sum, mad, sd)
                       value.var = .values,
                       drop = .drop,
                       fill = .fillNA,
@@ -131,7 +131,7 @@ common.fe.findRedundantCols <- function(dt, .sd = .01, .NA = .01, .verbose = T) 
   n <- names(dt)[desc]
   
   if(.verbose & length(n) > 0) {
-    write(sprintf("Deleting redundant columns...\n Count: %s. Names: %s", length(n), paste(n, collapse = ", ")), stdout())
+    write(sprintf("[TRACE] Detection %s redundant columns...\n%s", length(n), paste(head(n, 50L), collapse = ", ")), stdout())
   }
   
   n
@@ -168,7 +168,7 @@ local({
   stopifnot(
     nrow(x) > 0,
     nrow(x) == length(unique(dt$Id)),
-    ncol(x) == 1 + 2 * length(unique(dt$G1)) * length(unique(dt$G2)) * 6 - 6, # key_field + (V1 + V2) * G1 * G2 * metrics_count - length_abundance
+    ncol(x) == 1 + 2 * length(unique(dt$G1)) * length(unique(dt$G2)) * 7 - 6, # key_field + (V1 + V2) * G1 * G2 * metrics_count - length_abundance
     
     describe(x %>% select(starts_with("V1_min")))$min >= 0,
     describe(x %>% select(starts_with("V1_max")))$max <= 10,
@@ -215,12 +215,10 @@ local({
 #' @param dt 
 #' @param .threshold 
 #' @param .extraFields 
-#' @param .fillNA 
 #' @param .names 
+#' @param .verbose 
 #'
-common.fe.findCorrelatedCols <- function(dt, .threshold = .9,
-                                         .extraFields = NULL, .fillNA = NA_real_, 
-                                         .names = T) {
+common.fe.findCorrelatedCols <- function(dt, .threshold = .98, .extraFields = NULL, .names = T, .verbose = T) {
   require(caret)
   require(dplyr)
   
@@ -228,8 +226,8 @@ common.fe.findCorrelatedCols <- function(dt, .threshold = .9,
     is.data.frame(dt),
     is.double(.threshold),
     is.character(.extraFields) | is.null(.extraFields),
-    is.double(.fillNA),
-    is.logical(.names)
+    is.logical(.names),
+    is.logical(.verbose)
   )
   
   
@@ -238,17 +236,23 @@ common.fe.findCorrelatedCols <- function(dt, .threshold = .9,
     r <- r %>% select(-one_of(.extraFields))
   }
   
-  m <- cor(r) %>% replace_na(., .fillNA)
+  m <- cor(r, use = "pairwise.complete.obs", method = "pearson") %>% replace_na(., 0)
+
   
+  f <- findCorrelation(m, cutoff = .threshold, names = .names)
   
-  findCorrelation(m, cutoff = .threshold, names = .names)
+  if(.verbose & length(f) > 0) {
+    write(sprintf("[TRACE] Detection %s high correlated columns...\n%s", length(f), paste(head(f, 50L), collapse = ", ")), stdout())
+  }
+  
+  f
 }
 
 
 local({
   library(dplyr)
   
-  sampleSize = 100L
+  sampleSize <- 100L
   
   dt <- data.frame(
       Id = 1:sampleSize, # must be ignored
@@ -258,7 +262,7 @@ local({
     mutate(
       V2 = -V1, # cor(V1, V2) == -1
       V3 = rnorm(sampleSize, 0, 10) + V1, # cor(V1, V2) ~ .9
-      V4 = runif(sampleSize, 1L, 100L)
+      V4 = c(runif(sampleSize - 10, 1L, 100L), rep(NA_real_, 10))
     )
   
   stopifnot(
@@ -267,4 +271,5 @@ local({
     common.fe.findCorrelatedCols(dt, .threshold = .6, .extraFields = "Id") == c("V1", "V2")
   )
 })
+
 
