@@ -232,14 +232,15 @@ common.fe.findCorrelatedCols <- function(dt, .threshold = .98, .extraFields = NU
   
   
   r <- dt %>% select_if(is.numeric)
-  if (!is.null(.extraFields)) {
-    r <- r %>% select(-one_of(.extraFields))
-  }
+  
+  if (!is_empty(.extraFields)) r <- r %>% select(-one_of(.extraFields))
+  if (ncol(r) < 2) return(character())
+  
   
   m <- cor(r, use = "pairwise.complete.obs", method = "pearson") %>% replace_na(., 0)
-
   
   f <- findCorrelation(m, cutoff = .threshold, names = .names)
+  
   
   if(.verbose & length(f) > 0) {
     write(sprintf("[TRACE] Detection %s high correlated columns...\n%s", length(f), paste(head(f, 50L), collapse = ", ")), stdout())

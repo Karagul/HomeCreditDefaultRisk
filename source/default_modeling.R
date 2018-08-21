@@ -159,6 +159,9 @@ replaceMissingValues <- function(.datasets, .metadata, .fields, .predicate) {
   
   fieldNames <- names(.datasets$Train %>% select(matches(.fields)))
   
+  if (is_empty(fieldNames)) return(.datasets)
+  
+  
   write(sprintf("Replace missing values for: %s", paste(fieldNames, collapse = ", ")), stdout())
   
   dt.stats <- fieldNames %>% 

@@ -177,7 +177,7 @@ prevLoan.getHistoryStats <- function(dt,
 #'
 #' @param dt 
 #'
-prevLoan.featureSelection <- function(dt, .minSD = .01, .minNA = .05) {
+prevLoan.featureSelection <- function(dt, .minSD = .01, .minNA = .2) {
   require(dplyr)
   stopifnot(
     is.data.frame(dt),
@@ -201,7 +201,7 @@ prevLoan.featureSelection <- function(dt, .minSD = .01, .minNA = .05) {
       -one_of(common.fe.findRedundantCols(., .minSD, .minNA))
     ) %>%
     select(
-      -one_of(common.fe.findCorrelatedCols(., .threshold = .98, .extraFields = keyField))
+      -one_of(common.fe.findCorrelatedCols(., .threshold = .95, .extraFields = keyField))
     )
 }
 

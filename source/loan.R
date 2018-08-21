@@ -28,7 +28,7 @@ loan.getMetadata <- function(dt) {
     FactorSLE = c("NameContractType", "NameTypeSuite", "NameIncomeType", "NameEducationType", "NameFamilyStatus", 
                   "NameHousingType", "OccupationType", "OrganizationType", "FondkapremontMode", "HousetypeMode", "WallsmaterialMode",
                   "RegionRatingClient", "RegionRatingClientWCity"), 
-    FactorOHE = c(),
+    FactorOHE = character(),
     ExtraVars = c("SkIdCurr"),
     Redundant = c("FlagMobil", paste0("FlagDocument", c(2, 10, 12:17, 19:21)))
   )
